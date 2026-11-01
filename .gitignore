@@ -1,0 +1,42 @@
+# Gradle
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local configuration
+local.properties
+*.local
+.env
+.env.*
+!.env.example
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+out/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Android build artifacts
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+# Signing / credentials
+*.jks
+*.keystore
+*.p12
+*.pem
+keystore.properties
+
+# OS
+.DS_Store
+Thumbs.db
+*~
+
+# Logs
+*.log
+hs_err_pid*
