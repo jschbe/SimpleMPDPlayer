@@ -45,6 +45,9 @@ fun ServersApp(
     onBrowse: (String, Long) -> Unit = { _, _ -> },
     onEnqueue: (String, Boolean, Long) -> Unit = { _, _, _ -> },
     onLocalListening: (Boolean) -> Unit = {},
+    onSleepEnabled: (Boolean) -> Unit = {},
+    onSleepMinutes: (Int) -> Unit = {},
+    onSleepRetry: () -> Unit = {},
 ) {
     val pager = rememberPagerState(initialPage = 1, pageCount = { 3 })
     val scope = rememberCoroutineScope()
@@ -52,6 +55,7 @@ fun ServersApp(
     var initialNavigationResolved by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var serverMenu by remember { mutableStateOf(false) }
+    var sleepTimer by rememberSaveable { mutableStateOf(false) }
     var appearance by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.loading) {
         if (!state.loading && !initialNavigationResolved) {
@@ -107,7 +111,7 @@ fun ServersApp(
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(text = { Text(stringResource(R.string.servers)) }, onClick = { showServers = true; menu = false })
-                            DropdownMenuItem(text = { Text(stringResource(R.string.sleep_timer_unavailable)) }, onClick = {}, enabled = false)
+                            DropdownMenuItem(text = { Text(stringResource(R.string.sleep_timer)) }, onClick = { sleepTimer = true; menu = false })
                             DropdownMenuItem(text = { Text(stringResource(R.string.appearance)) }, onClick = { appearance = true; menu = false })
                         }
                     }
@@ -172,6 +176,10 @@ fun ServersApp(
     }
     state.editor?.let { editor ->
         key(editor.token) { ServerEditorDialog(editor, state.saving, state.saveFailed, onDismissEditor, onSave, onTest) }
+    }
+    if (sleepTimer) {
+        SleepTimerDialog(state.sleepTimer, state.activeServer?.name, state.saving,
+            onSleepEnabled, onSleepMinutes, onSleepRetry, { sleepTimer = false })
     }
     if (appearance) {
         AlertDialog(

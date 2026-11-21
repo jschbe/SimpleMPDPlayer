@@ -17,7 +17,7 @@ SimpleMPDPlayer is a minimal Android MPD client for Android 12 / API 31 and newe
 - Header shows the selected server name, subtle connection status and a Settings overflow menu. Offer manual reconnect when disconnected/failed; show understandable loading and error states.
 - Main tabs are **Browser, Player, Queue**, in that order. Player opens by default with a selected server. With no selection, open Servers management; with no profiles, automatically open Add server once per entry into the empty state. Cancel leaves the app usable without reopening the dialog.
 - Tabs and horizontal swipes share one state: left from Player opens Queue, right opens Browser, reverse gestures return to Player. Queue scrolls vertically. System Back returns to the parent only while Browser is visible in a subdirectory; otherwise retain existing Back behavior for Servers/dialogs and Android.
-- The header server-name dropdown lists stored profiles in order, marks the active one and switches without confirmation. Settings contains Servers, the unavailable Sleep timer and Appearance. Servers is not a main tab.
+- The header server-name dropdown lists stored profiles in order, marks the active one and switches without confirmation. Settings contains Servers, Sleep timer and Appearance. Servers is not a main tab.
 
 ### Player
 
@@ -72,9 +72,21 @@ SimpleMPDPlayer is a minimal Android MPD client for Android 12 / API 31 and newe
 - No playback resumption receiver, persisted streaming flag or sticky restart. An enabled paused receiver may be reclaimed under Android background limits; foreground/audio-focus restrictions may require opening the app and manually retrying. With reception disabled no audio foreground service remains.
 - Explicitly allow cleartext HTTP for arbitrary user-configured hosts through network security configuration. Retain INTERNET and existing API 37 local-network permission behavior (API 36 has no mandatory new runtime LAN permission); add only media foreground-service permissions and WAKE_LOCK. No router/MPD changes.
 
-## Later milestones
+## Implemented: M5 sleep timer
 
-- One sleep timer: 15/30/45/60 minutes or custom duration, remaining time, change/cancel. Send **pause 1**, preserving position, to the server bound at start. Use setAndAllowWhileIdle without exact-alarm permission, independently of local audio; delay/failure is possible. No complex multi-server timer infrastructure.
+- Exactly one global, one-shot timer in Settings → **Sleep timer**. On/Off, presets 15/30/45/60 minutes, custom whole minutes 1–1440; default 30. Persist the last applied duration. No selected server means On is unavailable; an existing MPD connection/local audio is not required to start.
+- On starts from now for the selected profile. Show the bound server, rounded-up remaining hours/minutes, estimated due time and a small Player countdown. Off cancels the alarm and timer. A changed duration restarts an active timer from now on its original target; choosing the unchanged duration does not reset it. Only Off then On binds a new selection.
+- Persist the profile ID and endpoint snapshot at start. Selection changes preserve the original target. Deleting it or changing host, MPD port or HTTP stream port cancels it. Rename/order/theme changes do not alter its alarm or deadline. Revalidate the saved endpoint again before sending.
+- Expiry opens a short, independent MPD connection, validates the greeting and sends only explicit **pause 1**. Never toggle pause, stop, play, seek or change queue/options/volume/outputs. A paused/stopped server is never started; playback position is preserved. Close the connection reliably. Local audio follows ordinary MPD idle updates only; the timer never activates Media3.
+- Use an explicit immutable PendingIntent and non-exported BroadcastReceiver with AlarmManager.setAndAllowWhileIdle and ELAPSED_REALTIME_WAKEUP. No exact-alarm permission/request, boot receiver, polling service or additional foreground service. Receiver IO is bounded and uses goAsync/finally finish.
+- Retain the monotonic deadline and boot count across process/Activity restart without rescheduling an existing alarm. System clock changes affect only the estimated wall time. A different boot or invalid monotonic reference cancels stale state on the next app start; never rearm after reboot. Timer storage is excluded from backup/device transfer.
+- Persist terminal success, cancellation and sanitized error states. Success means acknowledged Pause; network/timeout/ACK/authentication/permission/protocol failures are unconfirmed and never retried automatically. Interrupted registration or a missing PendingIntent is actionable; interrupted delivery is uncertain and is not replayed. Ordinary storage read failures must not overwrite stored settings.
+- Unique generation per start/restart rejects stale/early/duplicate events. Serialize cancellation, replacement, profile writes and a claimed delivery. If cancellation/restart/profile change wins before claim, the old timer sends nothing. Once delivery has been claimed, changes wait for that short attempt; an already sent command cannot be recalled. A durable claim prevents replay after process death.
+- Explain Android power-saving delays; zero remaining time means Due/Waiting for Android, never fabricated completion. Doze/Battery Saver may delay execution substantially; Force Stop, background restrictions, permissions and network failure prevent reliable delivery. No minute-exact or guaranteed execution, automatic retry loop or background-only toast error handling.
+
+## Future work
+
+Password authentication/storage and other features remain excluded from M5.
 
 ## Privacy and limits
 

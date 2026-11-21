@@ -52,6 +52,9 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
             PlaybackState.STOPPED -> R.string.stopped
             else -> R.string.playback_unknown
         }))
+        if (state.sleepTimer.active) SleepRemaining(state.sleepTimer)
+        if (state.sleepTimer.settings.record?.status == com.github.jschbe.simplempdplayer.timer.TimerStatus.FAILED ||
+            state.sleepTimer.operationError != null) Text(stringResource(R.string.timer_player_error), style = MaterialTheme.typography.bodySmall)
         LocalListening(state, onLocalListening)
         if (duration != null && state.positionSeconds != null) {
             val position = draggedPosition?.toDouble() ?: state.positionSeconds

@@ -349,4 +349,39 @@ class MpdRepository(
         is EOFException, is SocketException -> ConnectionError.LOST
         else -> ConnectionError.NETWORK
     }
+
+    companion object {
+        /** Independent, bounded one-shot connection. Never toggles playback or touches the queue. */
+        suspend fun pauseForTimer(
+            server: ServerProfile,
+            resolve: suspend (String) -> String = { it },
+            factory: () -> MpdConnection = { MpdClient(2_000, 2_000, 2_500) },
+        ): com.github.jschbe.simplempdplayer.timer.TimerError? {
+            val client = factory()
+            return try {
+                kotlinx.coroutines.withTimeout(6_000) {
+                    require(server.isValid())
+                    val host = resolve(server.host)
+                    client.connect(host, server.mpdPort)
+                    if (client.execute("pause", "1").isNotEmpty()) throw InvalidMpdResponse()
+                }
+                null
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                com.github.jschbe.simplempdplayer.timer.TimerError.TIMEOUT
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (ack: MpdAckException) {
+                if (ack.code == 3 || ack.code == 4) com.github.jschbe.simplempdplayer.timer.TimerError.AUTHENTICATION
+                else com.github.jschbe.simplempdplayer.timer.TimerError.REJECTED
+            } catch (_: SocketTimeoutException) {
+                com.github.jschbe.simplempdplayer.timer.TimerError.TIMEOUT
+            } catch (_: InvalidMpdResponse) {
+                com.github.jschbe.simplempdplayer.timer.TimerError.PROTOCOL
+            } catch (_: SecurityException) {
+                com.github.jschbe.simplempdplayer.timer.TimerError.PERMISSION
+            } catch (_: IOException) {
+                com.github.jschbe.simplempdplayer.timer.TimerError.NETWORK
+            } finally { client.close() }
+        }
+    }
+
 }

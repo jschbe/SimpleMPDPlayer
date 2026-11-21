@@ -7,6 +7,8 @@ import com.github.jschbe.simplempdplayer.audio.LocalStreamController
 import com.github.jschbe.simplempdplayer.audio.LocalStreamService
 import com.github.jschbe.simplempdplayer.audio.StreamBackend
 import com.github.jschbe.simplempdplayer.mpd.MpdRepository
+import com.github.jschbe.simplempdplayer.data.*
+import com.github.jschbe.simplempdplayer.timer.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,10 +20,21 @@ class PlayerApplication : Application() {
         super.onCreate()
         // Media3 source exceptions may contain remote details; expose only our error categories.
         androidx.media3.common.util.Log.setLogLevel(androidx.media3.common.util.Log.LOG_LEVEL_OFF)
+        sleepTimer.observe(playbackScope)
     }
 
     // Shared while the process lives: background metadata must not depend on an Activity's collectors.
     private val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val sleepTimer by lazy {
+        SleepTimerController(SleepTimerStore(sleepTimerDataStore), ServerSettingsStore(serverDataStore).settings,
+            AndroidTimerClock(this), AndroidTimerScheduler(this), profileMutationLock,
+            pause = {
+                if (android.os.Build.VERSION.SDK_INT >= 37 &&
+                    checkSelfPermission(android.Manifest.permission.ACCESS_LOCAL_NETWORK) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    TimerError.PERMISSION
+                } else MpdRepository.pauseForTimer(it, ::resolveTimerHost)
+            })
+    }
     val repository by lazy { MpdRepository(playbackScope) }
     val streamBackend by lazy { AndroidStreamBackend(this) }
     val localStream by lazy {

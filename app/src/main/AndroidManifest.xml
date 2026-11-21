@@ -19,6 +19,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.SimpleMPDPlayer">
+        <!-- Explicit one-shot inexact alarm; no boot receiver or exact-alarm permissions. -->
+        <receiver android:name=".timer.SleepTimerReceiver" android:exported="false" />
         <service
             android:name=".audio.LocalStreamService"
             android:exported="false"

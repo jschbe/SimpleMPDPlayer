@@ -2,7 +2,7 @@
 
 A minimal Android client for Music Player Daemon (MPD), for Android 12 and newer.
 
-## Current milestone: M4
+## Current milestone: M5
 
 - Saved server profiles, header dropdown, persistent ordering, connection status and manual reconnect.
 - First-run setup, independent MPD connection test, and Save that activates/connects the profile.
@@ -15,9 +15,10 @@ A minimal Android client for Music Player Daemon (MPD), for Android 12 and newer
 - MPD queue with current-song highlighting, play/remove/clear and move up/down actions.
 - External changes through a separate MPD idle connection to the same active server.
 - Optional **Listen on phone** HTTP audio, Media3 background playback and a read-only media session showing MPD metadata.
+- One persistent **Sleep timer**, independent of local listening, with 15/30/45/60-minute presets and custom 1–1440 minutes.
 - English Material 3 UI; Servers management lives in the Settings overflow menu.
 
-The Sleep timer remains marked as coming soon. M4 has no search, stored-playlist support, password authentication, cover art, downloads, offline playback, accounts, cloud services or analytics. Transport controls operate MPD; local audio is a separate optional receiver.
+M5 has no search, stored-playlist support, password authentication, cover art, downloads, offline playback, accounts, cloud services or analytics. Transport controls operate MPD; local audio is a separate optional receiver.
 
 ## Build and test
 
@@ -49,6 +50,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 8. Check Connecting, Buffering, Receiving, Waiting for MPD and failure/retry feedback. HTTP bytes can contain silence while MPD is paused: readiness does not prove audible music. Local output follows confirmed MPD play/pause/stop. On MPD resume, it rejoins the live HTTP origin to discard old buffered silence. Audio can lag behind the displayed MPD title/position.
 9. While listening to a playing server, switch apps or turn the screen off. The media notification/lock screen shows MPD metadata and opens the app. System transport/seek controls are deliberately unavailable; use the app to control MPD and to enable/disable local listening. Focus loss or unplugging headphones affects local audio only. Permanent focus loss/noisy events turn reception off; transient focus loss can suppress and resume local sound through ExoPlayer. Bluetooth routing uses Android defaults. After a long pause Android may reclaim the service; open the app and enable listening again if needed.
 
+10. Open Settings → **Sleep timer**. Default duration is 30 minutes; presets and **Custom minutes** / **Apply duration** save the last choice. Switch On to start now for the selected server, even without a current MPD connection or **Listen on phone**. The dialog shows the bound server, rounded-up remaining hours/minutes and estimated due time; Player shows a small countdown. Switch Off to cancel. Changing duration restarts the active timer from now on its original server.
+11. Selecting another server does not move the timer. Deleting the bound profile or changing its host, MPD port or HTTP stream port cancels it; renaming and sorting do not. At expiry an independent short connection sends only `pause 1`, never Stop/Play or queue commands. MPD acknowledgement is required for success. Failure is saved and shown under Sleep timer with a Player attention hint; no automatic retry runs.
+12. Android power saving can delay this **inexact** alarm substantially. Clock changes do not move its monotonic deadline; the estimated wall time follows clock changes. Normal process/Activity restart preserves the alarm within the same device boot. Reboot cancels the old timer on the next app start, without automatic rearming. Force Stop, missing permission, unavailable LAN/server or Android background restrictions can prevent delivery. If interrupted mid-delivery, the outcome is uncertain and is not replayed. A cancellation/profile edit arriving after delivery has been claimed waits for that bounded attempt; a command already sent cannot be recalled.
+
 MPD remains the only playlist and playback authority. Local progress interpolates between server updates; failed commands do not pretend to succeed. Replacement serializes clear/add against this app's other commands, but cannot lock out other clients or roll back MPD changes. A failed recursive add can leave partial content; an interrupted exchange can leave its outcome uncertain. Unusually large directories/queues, continuous concurrent edits or a failed idle connection can require manual reconnect; see the architecture for bounds.
 
 Plain MPD TCP can be unencrypted. The app never opens router ports or configures MPD. Never commit your real server endpoints or credentials.
@@ -59,7 +64,7 @@ The original icon image is unchanged. Its baked rounded background was replaced 
 
 One app module, Kotlin, Compose/Material 3, ViewModel/StateFlow, Coroutines and Preferences DataStore. M4 adds only Media3 ExoPlayer and Session 1.11.1. The custom TCP client retains the tested Android-compatible ACK parser. System-bar icon contrast follows the selected theme, including live changes.
 
-M5 remains one inexact sleep timer sending `pause 1`; no timer or password infrastructure is implemented. Arbitrary configured HTTP hosts require a deliberate application-wide cleartext network-security opt-in. INTERNET and the existing API 37 local-network permission remain; media playback adds FOREGROUND_SERVICE, FOREGROUND_SERVICE_MEDIA_PLAYBACK and WAKE_LOCK. No notification runtime permission is requested: Android exempts media-session notifications. See the architecture for service and audio-focus limits.
+M5 adds no dependencies or permissions: one non-exported receiver uses `setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP)`. No exact-alarm permission, boot receiver or additional foreground service is used. Password support remains excluded. Timer state uses a separate Preferences DataStore excluded from cloud backup and device transfer, so a device-bound alarm cannot be restored elsewhere. Arbitrary configured HTTP hosts require a deliberate application-wide cleartext network-security opt-in. INTERNET and the existing API 37 local-network permission remain; media playback adds FOREGROUND_SERVICE, FOREGROUND_SERVICE_MEDIA_PLAYBACK and WAKE_LOCK. No notification runtime permission is requested: Android exempts media-session notifications. See the architecture for service and audio-focus limits.
 
 ## Documentation
 

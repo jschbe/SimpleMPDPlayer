@@ -6,6 +6,8 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
+    <!-- Boot-bound timer state must never be restored onto another device/boot. -->
+    <exclude domain="file" path="datastore/sleep_timer.preferences_pb" />
     <!--
    <include domain="sharedpref" path="."/>
    <exclude domain="sharedpref" path="device.xml"/>

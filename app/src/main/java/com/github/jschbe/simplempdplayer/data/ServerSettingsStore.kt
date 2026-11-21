@@ -12,6 +12,11 @@ import androidx.datastore.preferences.preferencesDataStore
 import java.io.IOException
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/** Serializes profile writes with the single timer claim/delivery, across store instances. */
+internal val profileMutationLock = Mutex()
 
 private val profilesKey = stringPreferencesKey("server_profiles_v1")
 private val selectedKey = stringPreferencesKey("selected_server_id")
@@ -64,7 +69,7 @@ class ServerSettingsStore(private val dataStore: DataStore<Preferences>) {
         )
     }
 
-    private suspend fun change(transform: (ServerSettings) -> ServerSettings) {
+    private suspend fun change(transform: (ServerSettings) -> ServerSettings) = profileMutationLock.withLock {
         dataStore.edit { preferences ->
             val changed = transform(decode(preferences))
             preferences[profilesKey] = ServerSettingsCodec.encode(changed.servers)

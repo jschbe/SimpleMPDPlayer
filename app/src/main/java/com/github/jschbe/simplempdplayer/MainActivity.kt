@@ -35,7 +35,8 @@ class MainActivity : ComponentActivity() {
                         ServersViewModel(ServerSettingsStore(context.serverDataStore), networkPermission = {
                             Build.VERSION.SDK_INT < 37 || context.checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED
                         }, sharedRepository = (application as PlayerApplication).repository,
-                            localStream = (application as PlayerApplication).localStream)
+                            localStream = (application as PlayerApplication).localStream,
+                            sleepTimer = (application as PlayerApplication).sleepTimer)
                     }
                 }
             }
@@ -61,7 +62,7 @@ class MainActivity : ComponentActivity() {
             val networkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
                 model.refreshNetworkPermission()
             }
-            LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.refreshNetworkPermission() }
+            LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.refreshNetworkPermission(); model.refreshSleepTimer() }
             SimpleMPDPlayerTheme(mode = state.settings.theme) {
                 ServersApp(
                     state = state,
@@ -74,6 +75,9 @@ class MainActivity : ComponentActivity() {
                     onReconnect = model::reconnect,
                     onAction = model::perform,
                     onLocalListening = model::setLocalListening,
+                    onSleepEnabled = model::setSleepEnabled,
+                    onSleepMinutes = model::setSleepMinutes,
+                    onSleepRetry = model::refreshSleepTimer,
                     onLoadBrowser = model::loadBrowser,
                     onBrowse = model::browse,
                     onEnqueue = model::enqueue,

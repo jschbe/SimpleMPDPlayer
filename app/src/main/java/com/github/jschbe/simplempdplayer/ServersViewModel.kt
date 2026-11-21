@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.github.jschbe.simplempdplayer.audio.LocalStreamController
 import com.github.jschbe.simplempdplayer.audio.StreamState
+import com.github.jschbe.simplempdplayer.timer.SleepTimerController
+import com.github.jschbe.simplempdplayer.timer.SleepTimerState
 import com.github.jschbe.simplempdplayer.data.ServerProfile
 import com.github.jschbe.simplempdplayer.data.ServerSettings
 import com.github.jschbe.simplempdplayer.data.ServerSettingsStore
@@ -37,6 +39,7 @@ data class ServersUiState(
     val positionSeconds: Double? = null,
     val browser: BrowserState = BrowserState(),
     val localStream: StreamState = StreamState(),
+    val sleepTimer: SleepTimerState = SleepTimerState(),
 ) {
     val activeServer: ServerProfile?
         get() = settings.servers.find { it.id == settings.selectedId }
@@ -48,6 +51,7 @@ class ServersViewModel(
     private val networkPermission: () -> Boolean = { true },
     private val sharedRepository: MpdRepository? = null,
     private val localStream: LocalStreamController? = null,
+    private val sleepTimer: SleepTimerController? = null,
 ) : ViewModel() {
     private val repository = sharedRepository ?: MpdRepository(viewModelScope, connectionFactory)
     private val mutableState = MutableStateFlow(ServersUiState())
@@ -67,6 +71,14 @@ class ServersViewModel(
     init {
         localStream?.let { stream ->
             viewModelScope.launch { stream.state.collect { audio -> mutableState.update { it.copy(localStream = audio) } } }
+        }
+        sleepTimer?.let { timer ->
+            viewModelScope.launch { timer.state.collect { value -> mutableState.update { it.copy(sleepTimer = value) } } }
+            viewModelScope.launch {
+                timer.state.map { it.active }.distinctUntilChanged().collectLatest { active ->
+                    if (active) while (isActive) { timer.tick(); delay(1_000) }
+                }
+            }
         }
         observeSettings()
         viewModelScope.launch {
@@ -210,6 +222,10 @@ class ServersViewModel(
         invalidateNotices()
         connect(mutableState.value.activeServer)
     }
+
+    fun setSleepEnabled(enabled: Boolean) { viewModelScope.launch { sleepTimer?.setEnabled(enabled) } }
+    fun setSleepMinutes(minutes: Int) { viewModelScope.launch { sleepTimer?.setMinutes(minutes) } }
+    fun refreshSleepTimer() { sleepTimer?.retry() }
 
     fun setLocalListening(enabled: Boolean) {
         if (enabled) {

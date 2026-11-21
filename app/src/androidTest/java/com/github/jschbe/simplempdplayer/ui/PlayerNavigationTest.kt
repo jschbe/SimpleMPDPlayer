@@ -126,10 +126,13 @@ class PlayerNavigationTest {
     }
 
     @Test
-    fun settingsOpensServersAndSleepTimerIsUnavailable() {
+    fun settingsOpensServersAndSleepTimerIsAvailable() {
         show()
         compose.onNodeWithContentDescription("Settings").performClick()
-        compose.onNodeWithText("Sleep timer — coming soon").assertIsNotEnabled()
+        compose.onNodeWithText("Sleep timer").assertIsEnabled().performClick()
+        compose.onNodeWithTag("sleep_timer_switch").assertExists()
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithContentDescription("Settings").performClick()
         compose.onNodeWithText("Servers").performClick()
         compose.onNodeWithContentDescription("Add server").assertIsDisplayed()
         compose.onNodeWithContentDescription("Back").performClick()
