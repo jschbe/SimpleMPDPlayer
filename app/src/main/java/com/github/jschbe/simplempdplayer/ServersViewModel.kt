@@ -33,6 +33,7 @@ data class ServersUiState(
     val connection: ConnectionState = ConnectionState(),
     val editor: ServerEditor? = null,
     val positionSeconds: Double? = null,
+    val browser: BrowserState = BrowserState(),
 ) {
     val activeServer: ServerProfile?
         get() = settings.servers.find { it.id == settings.selectedId }
@@ -60,6 +61,9 @@ class ServersViewModel(
 
     init {
         observeSettings()
+        viewModelScope.launch {
+            repository.browser.collect { browser -> mutableState.update { it.copy(browser = browser) } }
+        }
         viewModelScope.launch {
             repository.state.collectLatest { connection ->
                 val snapshot = connection.snapshot
@@ -200,6 +204,10 @@ class ServersViewModel(
     }
 
     fun perform(action: PlayerAction) = repository.perform(action)
+
+    fun loadBrowser() = repository.loadBrowser()
+    fun browse(path: String, generation: Long) = repository.browse(path, generation)
+    fun enqueue(uri: String, replace: Boolean, generation: Long) = repository.enqueue(uri, replace, generation)
 
     fun refreshNetworkPermission() {
         val allowed = networkPermission()

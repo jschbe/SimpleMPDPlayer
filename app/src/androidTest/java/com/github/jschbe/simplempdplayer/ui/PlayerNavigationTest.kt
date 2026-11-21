@@ -66,7 +66,7 @@ class PlayerNavigationTest {
         compose.onNodeWithTag("player_page").assertIsDisplayed()
         compose.onNodeWithTag("tab_0").performClick()
         compose.onNodeWithTag("tab_0").assertIsSelected()
-        compose.onNodeWithText("Music browser coming soon").assertIsDisplayed()
+        compose.onNodeWithText("Music library").assertIsDisplayed()
         compose.onNodeWithTag("tab_2").performClick()
         compose.onNodeWithTag("tab_2").assertIsSelected()
         compose.onNodeWithTag("queue_page").assertIsDisplayed()

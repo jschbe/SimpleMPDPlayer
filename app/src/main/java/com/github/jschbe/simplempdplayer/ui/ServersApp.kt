@@ -41,6 +41,9 @@ fun ServersApp(
     onTest: (ServerProfile) -> Unit = {},
     onReorder: (List<String>) -> Unit = {},
     onTheme: (ThemeMode) -> Unit = {},
+    onLoadBrowser: () -> Unit = {},
+    onBrowse: (String, Long) -> Unit = { _, _ -> },
+    onEnqueue: (String, Boolean, Long) -> Unit = { _, _, _ -> },
 ) {
     val pager = rememberPagerState(initialPage = 1, pageCount = { 3 })
     val scope = rememberCoroutineScope()
@@ -58,6 +61,12 @@ fun ServersApp(
     BackHandler(enabled = showServers) { showServers = false }
     val connected = state.connection.status == ConnectionStatus.CONNECTED
     val controlsEnabled = connected && !state.connection.commandPending
+    LaunchedEffect(showServers, pager.settledPage, state.connection.status, state.browser.generation) {
+        if (!showServers && pager.settledPage == 0 && connected) onLoadBrowser()
+    }
+    BackHandler(enabled = !showServers && pager.currentPage == 0 && state.browser.path.isNotEmpty() && connected) {
+        onBrowse(state.browser.parent, state.browser.generation)
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -149,9 +158,7 @@ fun ServersApp(
                 }
                 HorizontalPager(state = pager, modifier = Modifier.weight(1f).testTag("main_pager")) { page ->
                     when (page) {
-                        0 -> Box(Modifier.fillMaxSize().testTag("browser_page"), contentAlignment = Alignment.Center) {
-                            Text(stringResource(R.string.browser_coming_soon))
-                        }
+                        0 -> BrowserScreen(state.browser, connected, controlsEnabled, onBrowse, onEnqueue)
                         1 -> PlayerScreen(state, controlsEnabled, onAction)
                         2 -> QueueScreen(
                             state.connection.snapshot, state.settings.selectedId,

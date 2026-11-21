@@ -16,8 +16,8 @@ SimpleMPDPlayer is a minimal Android MPD client for Android 12 / API 31 and newe
 
 - Header shows the selected server name, subtle connection status and a Settings overflow menu. Offer manual reconnect when disconnected/failed; show understandable loading and error states.
 - Main tabs are **Browser, Player, Queue**, in that order. Player opens by default with a selected server. With no selection, open Servers management; with no profiles, automatically open Add server once per entry into the empty state. Cancel leaves the app usable without reopening the dialog.
-- Tabs and horizontal swipes share one state: left from Player opens Queue, right opens Browser, reverse gestures return to Player. Queue scrolls vertically. Do not intercept system Back outside the Servers subview/dialogs.
-- The header server-name dropdown lists stored profiles in order, marks the active one and switches without confirmation. Settings contains Servers, the unavailable Sleep timer and Appearance. Servers is not a main tab. Browser displays “Music browser coming soon”.
+- Tabs and horizontal swipes share one state: left from Player opens Queue, right opens Browser, reverse gestures return to Player. Queue scrolls vertically. System Back returns to the parent only while Browser is visible in a subdirectory; otherwise retain existing Back behavior for Servers/dialogs and Android.
+- The header server-name dropdown lists stored profiles in order, marks the active one and switches without confirmation. Settings contains Servers, the unavailable Sleep timer and Appearance. Servers is not a main tab.
 
 ### Player
 
@@ -47,12 +47,21 @@ SimpleMPDPlayer is a minimal Android MPD client for Android 12 / API 31 and newe
 - Save persists profile and selection together. Close the dialog only after successful persistence, then show Connecting… outside it. Emit Connected/Connection failed only after the actual current connection result, with stale notifications discarded. A failed storage write keeps the editor open; a failed connection keeps the profile saved/selected.
 - Servers has a top-right Add button, drag handles, name/endpoint, active marker and edit/delete actions. Only handle long-press starts dragging; commit order on drop and use it in the header. No server Move up/down buttons. Reordering does not reconnect or change selection.
 - Confirm every deletion with “Delete server?” and “Are you sure you want to delete "<name>"?”. Cancel changes nothing. Deleting the active profile disconnects without selecting another; deleting the last opens Add server once, and Cancel can leave it empty.
-- Appearance offers System default (initial), Light and Dark radio choices. Persist and apply immediately to all app screens/dialogs/menus; System default follows Android changes.
+- Appearance offers System default (initial), Light and Dark radio choices. Persist and apply immediately to all app screens/dialogs/menus; System default follows Android changes. Status/navigation-bar icons follow the effective theme without changing edge-to-edge layout.
 - Launcher/settings icons use the provided artwork with adaptive layers, API 33+ monochrome and legacy sizes. Preserve the original asset. The precomposed image requires approximate foreground/background separation; document that limit.
+
+## Implemented: M3 music-library browser
+
+- Browse the active MPD database by folder using `lsinfo` (root without arguments); fetch one level only when Browser first becomes visible or the user navigates/retries. Keep only the current listing, without a recursive library cache.
+- List directories before files. Use directory/filename fallbacks, Unicode names and available title/artist/duration metadata. Preserve spaces, quotes and backslashes through protocol escaping. Skip stored-playlist records with an explanatory notice; do not treat unknown types as files.
+- Folder taps navigate; show the current path and an Up control. Android Back navigates to the parent while browsing a subdirectory, including during loading. Preserve ordinary horizontal pager swipes. Returning to the current directory from another tab does not reload or reset its scroll.
+- File taps and trailing folder menus offer **Append to queue** / **Replace queue**. Append sends one `add <URI>` for either type; MPD handles recursive folders. Confirm every replacement, then serialize `clear` followed by `add <URI>` on the active command connection. Never start playback automatically.
+- Update the actual MPD queue through existing readback/idle synchronization; never maintain a separate local playlist. Report success only after acknowledged commands and readback. Report failed/uncertain additions and partial replacement after a successful clear explicitly; recursive additions may themselves be partial. There is no transaction, rollback or exclusion of other MPD clients.
+- Handle root/empty/loading/error/disconnected states and inaccessible folders. A directory ACK allows retry/Up without disconnecting playback. Transport/protocol failures retain manual reconnect. Switching/reconnecting clears old listings, menus and confirmations and starts at root; discard old asynchronous results. Do not blindly replay mutations.
+- No search, covers, stored-playlist operations, local files/audio, timer or authentication is added.
 
 ## Later milestones
 
-- M3: browse the MPD directory library; add files or recursive folders by append or replace. Replacing the queue must not start playback automatically. Handle partial server-side changes honestly.
 - Local HTTP audio: Media3/ExoPlayer with MediaSessionService, manual activation only, off on fresh startup. Disabling reception leaves MPD playing. Support background/screen-off, Bluetooth, audio focus and independent local Android volume. No independent song playlist; buffered audio can lag behind MPD status.
 - One sleep timer: 15/30/45/60 minutes or custom duration, remaining time, change/cancel. Send **pause 1**, preserving position, to the server bound at start. Use setAndAllowWhileIdle without exact-alarm permission, independently of local audio; delay/failure is possible. No complex multi-server timer infrastructure.
 

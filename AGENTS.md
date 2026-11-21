@@ -5,7 +5,7 @@ These rules apply throughout this repository. Explicit user instructions determi
 ## Workflow
 
 - Read the relevant existing code, [requirements](docs/REQUIREMENTS.md) and [architecture](docs/ARCHITECTURE.md) before changing behavior. Preserve unrelated work and project settings.
-- The current milestone is **M2: player controls, queue and swipe navigation**, retaining M1 server management. The content browser, HTTP audio and sleep timer remain outside this milestone.
+- The current milestone is **M3: MPD folder browser and queue append/replace**, retaining M1 server management and M2 player/queue/navigation. HTTP audio and the sleep timer remain outside this milestone.
 - Keep the implementation small: one app module, explicit construction, no speculative frameworks or multi-server infrastructure. Record unresolved details rather than inventing elaborate solutions.
 - Keep documentation, identifiers, comments and UI in English. Communicate with the user in German. Put every UI string in `app/src/main/res/values/strings.xml`.
 - Never commit real server addresses, credentials, signing material or machine-specific settings. Do not expose raw server responses in UI errors or logs.

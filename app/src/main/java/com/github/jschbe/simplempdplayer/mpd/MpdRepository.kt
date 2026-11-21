@@ -12,7 +12,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -39,13 +41,22 @@ class MpdRepository(
     private val pingIntervalMillis: Long = 15_000,
     private val nanoTime: () -> Long = System::nanoTime,
 ) {
-    private class Session(val command: MpdConnection, val events: MpdConnection) {
+    private class Session(val command: MpdConnection, val events: MpdConnection, val work: Job) {
         val operations = Mutex()
-        fun close() { command.close(); events.close() }
+        var browserRequest = 0L
+        var closed = false
+        fun close() {
+            closed = true
+            command.close()
+            events.close()
+            work.cancel()
+        }
     }
 
     private val mutableState = MutableStateFlow(ConnectionState())
     val state = mutableState.asStateFlow()
+    private val mutableBrowser = MutableStateFlow(BrowserState())
+    val browser = mutableBrowser.asStateFlow()
     private var session: Session? = null
     private var job: Job? = null
 
@@ -72,7 +83,7 @@ class MpdRepository(
             mutableState.value = ConnectionState(ConnectionStatus.FAILED, ConnectionError.PERMISSION_REQUIRED)
             return
         }
-        val current = Session(connectionFactory(), connectionFactory())
+        val current = Session(connectionFactory(), connectionFactory(), Job(scope.coroutineContext[Job]))
         session = current
         mutableState.value = ConnectionState(ConnectionStatus.CONNECTING)
         job = scope.launch {
@@ -110,10 +121,10 @@ class MpdRepository(
         val current = session ?: return
         if (state.value.status != ConnectionStatus.CONNECTED || state.value.commandPending) return
         mutableState.update { it.copy(commandPending = true, commandError = null) }
-        scope.launch {
+        scope.launch(current.work) {
             try {
                 current.operations.withLock {
-                    if (session !== current) return@withLock
+                    if (!isCurrent(current)) return@withLock
                     try {
                         executeAction(current.command, action)
                     } catch (_: MpdAckException) {
@@ -133,6 +144,110 @@ class MpdRepository(
             }
         }
     }
+
+    fun loadBrowser() {
+        val value = browser.value
+        if (!value.loaded && !value.loading && value.error == null) browse(value.path, value.generation)
+    }
+
+    fun browse(path: String, generation: Long) {
+        val current = session ?: return
+        val previous = browser.value
+        if (!isCurrent(current) || state.value.status != ConnectionStatus.CONNECTED || generation != previous.generation) return
+        // Accept only the current directory, an ancestor or a directory from the current listing.
+        if (path != previous.path && path.isNotEmpty() && !previous.path.startsWith("$path/") &&
+            previous.entries.none { it is LibraryEntry.Directory && it.uri == path }
+        ) return
+        val request = ++current.browserRequest
+        mutableBrowser.value = BrowserState(generation = generation, path = path, loading = true, queueMessage = previous.queueMessage)
+        scope.launch(current.work) {
+            try {
+                current.operations.withLock {
+                    if (!isCurrent(current) || request != current.browserRequest) return@withLock
+                    val fields = if (path.isEmpty()) current.command.execute("lsinfo") else current.command.execute("lsinfo", path)
+                    currentCoroutineContext().ensureActive()
+                    val listing = MpdBrowserData.directory(fields)
+                    if (isCurrent(current) && request == current.browserRequest) {
+                        mutableBrowser.update { it.copy(entries = listing.entries, hasPlaylists = listing.hasPlaylists, loading = false, loaded = true) }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: MpdAckException) {
+                if (isCurrent(current) && request == current.browserRequest) {
+                    mutableBrowser.update { it.copy(loading = false, error = ConnectionError.MPD_REJECTED) }
+                }
+            } catch (error: IOException) {
+                fail(current, classify(error))
+            } catch (_: SecurityException) {
+                fail(current, ConnectionError.PERMISSION_REQUIRED)
+            }
+        }
+    }
+
+    /** clear/add/readback share the same lock as every other app command and idle refresh. */
+    fun enqueue(uri: String, replace: Boolean, generation: Long) {
+        val current = session ?: return
+        if (!isCurrent(current) || state.value.status != ConnectionStatus.CONNECTED || state.value.commandPending ||
+            browser.value.generation != generation || browser.value.entries.none { it.uri == uri }
+        ) return
+        mutableState.update { it.copy(commandPending = true, commandError = null) }
+        mutableBrowser.update { it.copy(queueMessage = null) }
+        scope.launch(current.work) {
+            var clearStarted = false
+            var cleared = false
+            var added = false
+            var rejection: BrowserQueueMessage? = null
+            fun failedMessage() = when {
+                rejection != null -> rejection!!
+                added -> BrowserQueueMessage.REFRESH_FAILED
+                cleared -> BrowserQueueMessage.REPLACE_PARTIAL
+                clearStarted -> BrowserQueueMessage.REPLACE_UNCONFIRMED
+                else -> BrowserQueueMessage.ADD_FAILED
+            }
+            fun message(value: BrowserQueueMessage) {
+                if (session === current) mutableBrowser.update { it.copy(queueMessage = value) }
+            }
+            try {
+                current.operations.withLock {
+                    if (!isCurrent(current)) return@withLock
+                    try {
+                        if (replace) {
+                            clearStarted = true
+                            current.command.execute("clear")
+                            cleared = true
+                            currentCoroutineContext().ensureActive()
+                            if (!isCurrent(current)) return@withLock
+                        }
+                        current.command.execute("add", uri)
+                        added = true
+                        currentCoroutineContext().ensureActive()
+                    } catch (_: MpdAckException) {
+                        rejection = if (replace && !cleared) BrowserQueueMessage.CLEAR_FAILED else failedMessage()
+                        message(rejection!!)
+                        refresh(current)
+                        return@withLock
+                    }
+                    refresh(current)
+                    if (isCurrent(current)) message(if (replace) BrowserQueueMessage.REPLACED else BrowserQueueMessage.APPENDED)
+                }
+            } catch (cancelled: CancellationException) {
+                // A switch discards notices; a failed idle connection may interrupt a partial write.
+                message(failedMessage())
+                throw cancelled
+            } catch (error: IOException) {
+                message(failedMessage())
+                fail(current, classify(error))
+            } catch (_: SecurityException) {
+                message(failedMessage())
+                fail(current, ConnectionError.PERMISSION_REQUIRED)
+            } finally {
+                if (session === current) mutableState.update { it.copy(commandPending = false) }
+            }
+        }
+    }
+
+    private fun isCurrent(current: Session) = session === current && !current.closed
 
     private suspend fun executeAction(client: MpdConnection, action: PlayerAction) {
         when (action) {
@@ -179,7 +294,7 @@ class MpdRepository(
 
     /** All callers hold this session's operations lock, so command + refresh cannot interleave. */
     private suspend fun refresh(current: Session) {
-        if (session !== current) return
+        if (!isCurrent(current)) return
         repeat(3) {
             val before = MpdData.status(current.command.execute("status"))
             val song = MpdData.currentSong(current.command.execute("currentsong"))
@@ -188,7 +303,7 @@ class MpdRepository(
                 MpdData.queue(current.command.execute("playlistinfo"))
             } else old.queue
             val after = MpdData.status(current.command.execute("status"))
-            if (session !== current) return
+            if (!isCurrent(current)) return
             if (before.queueVersion == after.queueVersion && before.songId == after.songId &&
                 song?.id == after.songId && (after.queueLength == null || after.queueLength == queue.size)
             ) {
@@ -202,18 +317,21 @@ class MpdRepository(
     }
 
     private fun fail(current: Session, error: ConnectionError) {
-        if (session !== current) return
+        if (!isCurrent(current)) return
+        mutableState.update { it.copy(status = ConnectionStatus.FAILED, error = error, commandPending = false) }
+        mutableBrowser.update { it.copy(entries = emptyList(), loaded = false, loading = false, error = null) }
         job?.cancel()
         current.close()
-        mutableState.update { it.copy(status = ConnectionStatus.FAILED, error = error, commandPending = false) }
     }
 
     fun close() {
-        session?.close()
+        val previous = session
         session = null
+        previous?.close()
         job?.cancel()
         job = null
         mutableState.value = ConnectionState()
+        mutableBrowser.value = BrowserState(generation = browser.value.generation + 1)
     }
 
     private fun classify(error: IOException): ConnectionError = when (error) {
