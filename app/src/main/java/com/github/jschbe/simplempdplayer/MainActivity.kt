@@ -34,7 +34,8 @@ class MainActivity : ComponentActivity() {
                     initializer {
                         ServersViewModel(ServerSettingsStore(context.serverDataStore), networkPermission = {
                             Build.VERSION.SDK_INT < 37 || context.checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED
-                        })
+                        }, sharedRepository = (application as PlayerApplication).repository,
+                            localStream = (application as PlayerApplication).localStream)
                     }
                 }
             }
@@ -72,6 +73,7 @@ class MainActivity : ComponentActivity() {
                     onSelect = model::select,
                     onReconnect = model::reconnect,
                     onAction = model::perform,
+                    onLocalListening = model::setLocalListening,
                     onLoadBrowser = model::loadBrowser,
                     onBrowse = model::browse,
                     onEnqueue = model::enqueue,

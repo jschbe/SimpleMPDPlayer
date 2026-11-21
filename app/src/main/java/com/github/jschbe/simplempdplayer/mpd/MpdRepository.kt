@@ -57,6 +57,8 @@ class MpdRepository(
     val state = mutableState.asStateFlow()
     private val mutableBrowser = MutableStateFlow(BrowserState())
     val browser = mutableBrowser.asStateFlow()
+    var activeServer: ServerProfile? = null
+        private set
     private var session: Session? = null
     private var job: Job? = null
 
@@ -79,6 +81,7 @@ class MpdRepository(
     fun connect(server: ServerProfile?, networkAllowed: Boolean = true) {
         close()
         if (server == null) return
+        activeServer = server
         if (!networkAllowed) {
             mutableState.value = ConnectionState(ConnectionStatus.FAILED, ConnectionError.PERMISSION_REQUIRED)
             return
@@ -325,6 +328,7 @@ class MpdRepository(
     }
 
     fun close() {
+        activeServer = null
         val previous = session
         session = null
         previous?.close()

@@ -1,0 +1,1 @@
+stream-tone.mp3 is a generated 440 Hz sine wave, mono 44100 Hz, encoded with libmp3lame at 128 kbit/s. No third-party recording or metadata is used. Generated for this project; dedicated to the public domain under CC0-1.0. Tests loop the bytes as a continuous HTTP source. It is not production media.

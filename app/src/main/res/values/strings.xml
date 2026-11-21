@@ -106,4 +106,20 @@
     <string name="settings_recovered">Invalid saved settings were ignored. Review your server profiles.</string>
     <string name="settings_read_failed">Could not load saved servers. Retry to load them again.</string>
     <string name="settings_save_failed">Could not save changes. Please try again.</string>
+    <string name="listen_on_phone">Listen on phone</string>
+    <string name="stream_off">Off · MPD outputs are unchanged</string>
+    <string name="stream_connecting">Connecting to the HTTP stream…</string>
+    <string name="stream_buffering">Buffering HTTP audio…</string>
+    <string name="stream_active">Receiving audio · May lag behind MPD</string>
+    <string name="stream_waiting">Ready · Waiting for MPD playback</string>
+    <string name="stream_interrupted">Local audio interrupted by Android</string>
+    <string name="stream_volume_hint">Phone / Bluetooth volume controls local audio. Transport controls below operate MPD.</string>
+    <string name="stream_retry">Retry local audio</string>
+    <string name="stream_error_unavailable">HTTP audio unavailable. Check the stream port and MPD httpd output, then retry.</string>
+    <string name="stream_error_timeout">HTTP audio timed out. Check the network and stream port, then retry.</string>
+    <string name="stream_error_format">The stream could not be decoded. Check the MPD HTTP audio format.</string>
+    <string name="stream_error_permission">Local audio needs network access. Check Android app permissions.</string>
+    <string name="stream_error_connection">Local audio stopped because the MPD connection was lost. Reconnect, then enable it again.</string>
+    <string name="stream_error_start">Android could not start local audio. Open the app and retry.</string>
+    <string name="stream_notification_status">Listen on phone · MPD: %1$s</string>
 </resources>

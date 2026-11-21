@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.mutablePreferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModelStore
 import com.github.jschbe.simplempdplayer.data.*
+import com.github.jschbe.simplempdplayer.audio.*
 import com.github.jschbe.simplempdplayer.mpd.*
 import java.io.IOException
 import java.net.ConnectException
@@ -213,24 +214,61 @@ class ServersViewModelTest {
         assertNull(f.vm.state.value.editor)
     }
 
+    @Test fun localActionsSendNoMpdCommandsAndSwitchReleasesBeforeConnecting() = vmTest {
+        var starts = 0
+        var stops = 0
+        val stream = LocalStreamController(object : StreamBackend {
+            override fun start(generation: Long) { starts++ }
+            override fun stop() { stops++ }
+        })
+        val f = fixture(listOf(first, second), first.id, stream)
+        runCurrent()
+        val commands = f.connections.flatMap { it.commands }.toList()
+        f.vm.setLocalListening(true)
+        runCurrent()
+        assertEquals(1, starts)
+        assertTrue(f.vm.state.value.localStream.enabled)
+        f.vm.setLocalListening(false)
+        runCurrent()
+        assertFalse(f.vm.state.value.localStream.enabled)
+        assertEquals(commands, f.connections.flatMap { it.commands })
+        f.vm.setLocalListening(true)
+        runCurrent()
+        val oldStops = stops
+        f.connectGate = {
+            assertFalse(stream.state.value.enabled)
+            assertTrue(stops > oldStops)
+        }
+        f.vm.select(second)
+        runCurrent()
+        assertEquals(second.id, f.vm.state.value.settings.selectedId)
+        assertFalse(f.vm.state.value.localStream.enabled)
+        assertEquals(2, starts)
+        f.vm.setLocalListening(true)
+        f.vm.reconnect()
+        runCurrent()
+        assertFalse(stream.state.value.enabled)
+        assertEquals(3, starts)
+    }
+
     private fun vmTest(block: suspend TestScope.() -> Unit) = runTest {
         try { block() } finally { models.clear(); runCurrent() }
     }
 
-    private fun fixture(profiles: List<ServerProfile> = emptyList(), selected: String? = null): Fixture {
-        val f = Fixture(profiles, selected)
+    private fun fixture(profiles: List<ServerProfile> = emptyList(), selected: String? = null, stream: LocalStreamController? = null): Fixture {
+        val f = Fixture(profiles, selected, stream)
         models.put("model${System.nanoTime()}", f.vm)
         return f
     }
 
-    private class Fixture(profiles: List<ServerProfile>, selected: String?) {
+    private class Fixture(profiles: List<ServerProfile>, selected: String?, stream: LocalStreamController?) {
         val data = MemoryDataStore(mutablePreferencesOf(stringPreferencesKey("server_profiles_v1") to ServerSettingsCodec.encode(profiles)).apply {
             selected?.let { this[stringPreferencesKey("selected_server_id")] = it }
         })
         var connectGate: suspend () -> Unit = {}
         var failure: IOException? = null
         val connections = mutableListOf<FakeConnection>()
-        val vm = ServersViewModel(ServerSettingsStore(data), connectionFactory = {
+        val vm = ServersViewModel(ServerSettingsStore(data), localStream = stream, connectionFactory = {
             FakeConnection(connectGate, failure).also(connections::add)
         })
     }
@@ -238,10 +276,13 @@ class ServersViewModelTest {
     private class FakeConnection(private val gate: suspend () -> Unit, private val failure: IOException?) : MpdConnection {
         var closed = false
         var pings = 0
+        val commands = mutableListOf<String>()
         override suspend fun connect(host: String, port: Int) { gate(); failure?.let { throw it } }
         override suspend fun ping() { pings++ }
-        override suspend fun execute(name: String, vararg arguments: String): List<Pair<String, String>> =
-            if (name == "status") listOf("state" to "stop", "playlist" to "1", "playlistlength" to "0") else emptyList()
+        override suspend fun execute(name: String, vararg arguments: String): List<Pair<String, String>> {
+            commands.add(name)
+            return if (name == "status") listOf("state" to "stop", "playlist" to "1", "playlistlength" to "0") else emptyList()
+        }
         override suspend fun idle(): Set<String> = awaitCancellation()
         override fun close() { closed = true }
     }

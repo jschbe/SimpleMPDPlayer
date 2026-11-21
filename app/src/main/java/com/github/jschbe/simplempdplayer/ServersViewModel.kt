@@ -2,6 +2,8 @@ package com.github.jschbe.simplempdplayer
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.github.jschbe.simplempdplayer.audio.LocalStreamController
+import com.github.jschbe.simplempdplayer.audio.StreamState
 import com.github.jschbe.simplempdplayer.data.ServerProfile
 import com.github.jschbe.simplempdplayer.data.ServerSettings
 import com.github.jschbe.simplempdplayer.data.ServerSettingsStore
@@ -34,6 +36,7 @@ data class ServersUiState(
     val editor: ServerEditor? = null,
     val positionSeconds: Double? = null,
     val browser: BrowserState = BrowserState(),
+    val localStream: StreamState = StreamState(),
 ) {
     val activeServer: ServerProfile?
         get() = settings.servers.find { it.id == settings.selectedId }
@@ -43,8 +46,10 @@ class ServersViewModel(
     private val store: ServerSettingsStore,
     connectionFactory: () -> MpdConnection = { MpdClient() },
     private val networkPermission: () -> Boolean = { true },
+    private val sharedRepository: MpdRepository? = null,
+    private val localStream: LocalStreamController? = null,
 ) : ViewModel() {
-    private val repository = MpdRepository(viewModelScope, connectionFactory)
+    private val repository = sharedRepository ?: MpdRepository(viewModelScope, connectionFactory)
     private val mutableState = MutableStateFlow(ServersUiState())
     val state = mutableState.asStateFlow()
     private val mutableNotices = MutableSharedFlow<UiNotice>(extraBufferCapacity = 4)
@@ -52,7 +57,7 @@ class ServersViewModel(
     private var settingsJob: Job? = null
     private var testJob: Job? = null
     private var networkAllowed = networkPermission()
-    private var desiredEndpoint: Triple<String, String, Int>? = null
+    private var desiredEndpoint = repository.activeServer?.endpoint()
     private var writingSettings = false
     private var wasEmpty: Boolean? = null
     private var editorToken = 0L
@@ -60,6 +65,9 @@ class ServersViewModel(
     private var pendingConnectionNotice: Long? = null
 
     init {
+        localStream?.let { stream ->
+            viewModelScope.launch { stream.state.collect { audio -> mutableState.update { it.copy(localStream = audio) } } }
+        }
         observeSettings()
         viewModelScope.launch {
             repository.browser.collect { browser -> mutableState.update { it.copy(browser = browser) } }
@@ -203,6 +211,12 @@ class ServersViewModel(
         connect(mutableState.value.activeServer)
     }
 
+    fun setLocalListening(enabled: Boolean) {
+        if (enabled) {
+            if (networkPermission() && !state.value.saving) localStream?.enable(state.value.activeServer, repository.state.value)
+        } else localStream?.disable()
+    }
+
     fun perform(action: PlayerAction) = repository.perform(action)
 
     fun loadBrowser() = repository.loadBrowser()
@@ -218,6 +232,7 @@ class ServersViewModel(
     }
 
     private fun connect(server: ServerProfile?, notifyToken: Long? = null) {
+        localStream?.disable()
         desiredEndpoint = server?.endpoint()
         pendingConnectionNotice = notifyToken
         networkAllowed = networkPermission()
@@ -226,8 +241,8 @@ class ServersViewModel(
 
     override fun onCleared() {
         testJob?.cancel()
-        repository.close()
+        if (sharedRepository == null) repository.close()
     }
 
-    private fun ServerProfile.endpoint() = Triple(id, host, mpdPort)
+    private fun ServerProfile.endpoint() = listOf(id, host, mpdPort.toString(), streamPort.toString())
 }

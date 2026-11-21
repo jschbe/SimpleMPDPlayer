@@ -11,11 +11,12 @@ One Android app module, `:app`, under `com.github.jschbe.simplempdplayer`. Kotli
 | JVM | Gradle daemon JDK 25 via Foojay; Java source/target compatibility 11 |
 | Compose | Plugin 2.2.10; BOM 2026.02.01 |
 | Existing AndroidX | Core KTX 1.19.1, Lifecycle 2.11.0, Activity Compose 1.13.0 |
+| M4 additions | Media3 ExoPlayer and Session 1.11.1 |
 | M1 additions | Lifecycle ViewModel/Runtime Compose 2.11.0, Preferences DataStore 1.3.0, Coroutines Android/Test 1.10.2 |
 
 Dependencies remain in `gradle/libs.versions.toml`, with stable versions. Google and Maven Central remain the dependency repositories. No MPD library, database, serialization library or DI framework is added. See [requirements](REQUIREMENTS.md) for scope and [README](../README.md) for running the app.
 
-## M1–M3 components and data flow
+## M1–M4 components and data flow
 
 ```mermaid
 flowchart TD
@@ -26,6 +27,10 @@ flowchart TD
     REPO --> IDLE[MpdClient idle socket]
     CMD --> MPD[Selected MPD server]
     IDLE --> MPD
+    VM --> LOCAL[LocalStreamController / manual process-local intent]
+    LOCAL --> SERVICE[LocalStreamService / MediaSessionService]
+    SERVICE --> EXO[ExoPlayer / one HTTP stream]
+    EXO --> HTTP[Active MPD httpd output]
 ```
 
 - `MainActivity` obtains a lifecycle-owned `ServersViewModel`; Compose collects its StateFlow with lifecycle awareness. Activity recreation/recomposition does not create additional connections.
@@ -35,7 +40,7 @@ flowchart TD
 - `MpdRepository` owns one session containing command/event clients and an operations Mutex. Old sockets and the idle coroutine are closed/cancelled on switch. Captured session identity guards every asynchronous publication, including command errors; old replies cannot modify a new server's UI. Switching clears the snapshot immediately.
 - `MpdModels` defines status, song metadata, queue entries, snapshots and the small `PlayerAction` event type. `MpdData` parses repeated tags and optional fields without flattening queue entries by path. Invalid critical IDs/status numbers fail in a controlled way; unavailable durations/mixers stay nullable.
 
-No foreground service is added. The ViewModel connection can remain while the Activity is stopped, subject to Android process/background limits. Clearing the ViewModel releases both sockets; process restart restores only the selected profile, then loads a fresh MPD snapshot.
+`PlayerApplication` constructs the production repository with a process-owned Main/SupervisorJob scope and the local stream controller. The Activity ViewModel observes this shared repository; clearing/recreating the Activity cannot destroy a background receiver or stop its metadata updates. A new Activity adopts the already connected endpoint without reconnecting. JVM ViewModel fixtures retain their independently owned repository and close it on clearing. Process death closes all resources; startup restores only profiles/selection and reconnects MPD, never local audio. Without local audio no foreground service keeps the process alive; idle control sockets are process-local and may be reclaimed by Android.
 
 ## Profiles and persistence
 
@@ -78,6 +83,20 @@ Each session has a child Job for app commands/browser work. Switch/failure close
 
 Append sends one `add <URI>` for files or directories; recursion belongs to MPD. Confirmed replacement sends `clear`, then `add <URI>`, then queue/status readback while holding the same operations Mutex used by playback, browsing, heartbeat and idle refresh. It sends no play command. This excludes app-originated interleaving only: other clients may change MPD state, and there is no transaction or rollback. The operation tracks acknowledged clear/add stages and retains explicit failure feedback. After a confirmed clear, a failed or unconfirmed add is a partial replacement; recursive add may already have inserted some tracks. Lost clear acknowledgements are reported as uncertain. A successful add followed by failed readback is distinguished from an add failure. No mutation is automatically retried, including after switching servers.
 
+## M4 local audio and session policy
+
+`LocalStreamController` owns only ephemeral enable intent, an increasing generation, request and state StateFlows. Its backend can start/stop local audio but has no MPD command API. Profile URL construction revalidates and normalizes the profile, uses the HTTP root path and stream port, IDN ASCII conversion and proper IPv6 brackets through `URI`; it accepts no scheme/path/credentials/controller-provided URL. The service reads a trusted in-memory request; its Intent contains only the generation. Stream intent is never persisted. `ServersViewModel.connect` disables/releases local audio synchronously before every explicit reconnect/Save/switch/delete, and includes the stream port in endpoint-change detection. Reordering/theme changes do not interrupt playback. The process owner forwards repository snapshots to the controller even without a visible Activity. Lost control connectivity stops local listening; stream failures do not call the repository or close MPD sockets. Generation guards reject stale errors and service destruction.
+
+`LocalStreamService` creates exactly one ExoPlayer and registers one MediaSession with the service. Media3 owns the media notification and foreground promotion. It uses standard media/music audio attributes with automatic audio focus, becoming-noisy handling and network wake mode. Local volume is Android's music stream, separate from MPD setvol. Permanent focus loss/noisy events disable/release local audio; transient suppression is reported and ExoPlayer may resume on focus return. No focus/route/system callback sends MPD commands. Default Android routing covers speaker, wired headphones and Bluetooth; real accessory behavior still needs manual acceptance.
+
+The service prepares the profile stream even when MPD is paused, but `playWhenReady` follows confirmed MPD PLAYING only. Paused/stopped/unknown snapshots pause local output and report Waiting for MPD when ready. HTTP can still supply silent MP3 frames while MPD is paused. On resume ExoPlayer stops/prepares the same item to reopen the live origin and discard accumulated silence. Metadata updates use `replaceMediaItem` only when metadata changed, without restarting an unchanged stream. Embedded MP3 ID3/artwork extraction is disabled; item metadata from MPD takes precedence over stream tags. There is no local track progress: a small standard ForwardingPlayer adapter exposes unknown duration and zero positions. App progress remains MPD-derived. MediaController clients can internally interpolate a position from playback speed; the unknown duration and unavailable seek commands prevent an independent stream scrubber in system UI. Audio buffering and MPD event timing can still make sound lag behind the UI.
+
+All controllers, including the media-notification/platform controller, receive only current-item/metadata/timeline read commands and no custom session commands. No play/pause/stop/seek/queue/item-replacement commands are offered. This conservative policy avoids interpreting a local decoder pause or headphone key as remote MPD intent. Use app transport controls for MPD; open the notification to reach them. The session reflects local suppression/buffering and MPD pause via the standard ExoPlayer state and identifies the MPD state in its subtitle. No transport routing bridge, custom queue/player engine, playback-resumption receiver or boot restart exists. The service is non-exported; even same-UID controllers cannot create/authorize a new player without manual app intent.
+
+HTTP uses Media3's default HTTP data source (8 s connect/read deadlines; cross-protocol redirects disabled), zero automatic load-error retries and a 20 s continuous connect/buffering watchdog. Sanitized error categories never expose response bodies/endpoints. Media3 library logging is disabled centrally so source exception details cannot bypass this policy. EOF, decode/transport failure, permission/start failure or loss of MPD terminate local reception and require a manual retry. Off immediately releases player/session, removes the notification/foreground state and stops the service. It is START_NOT_STICKY. Active playback survives task removal; an idle/paused task removal stops it. Android may reclaim a long-paused service, and foreground/audio-focus restrictions can block a background resume. The app reports failure and requires opening the app/retry rather than circumventing platform rules. The target/min SDK and Android routing/focus rules are unchanged.
+
+References: [Media3 stable releases](https://developer.android.com/jetpack/androidx/releases/media3), [MediaSessionService lifecycle/notification/controller commands](https://developer.android.com/media/media3/session/background-playback), [audio focus](https://developer.android.com/media/optimize/audio-focus), [ExoPlayer error policy](https://developer.android.com/media/media3/exoplayer/customization).
+
 ## Launcher icon
 
 The supplied `SimpleMPDPlayer.png` above the repository remains untouched. Derived resources separate the bright Play/stream artwork from its precomposed rounded tile. Android supplies the only adaptive mask; the background is a full-bleed dark gradient, and the symbol is padded within the adaptive safe area. Extraction and replacement of the original baked background are pragmatic approximations, not lossless source-layer recovery.
@@ -100,15 +119,13 @@ Responses retain M1's limits of 64 Ki characters per line and approximately 1 Mi
 
 ## Security and permissions
 
-The app declares `INTERNET` and, for Android 17 / API 37 and newer, `ACCESS_LOCAL_NETWORK`. The latter is necessary for direct LAN sockets at the existing target SDK 37. Until it is granted, server connections show an actionable permission error; the user can request access from the Servers screen. Permission changes are rechecked when the Activity resumes. See [Android local network permission](https://developer.android.com/privacy-and-security/local-network-permission). Direct MPD TCP is potentially unencrypted. Use a trusted LAN or a separately configured secure tunnel; the app never publishes ports or configures the server. M2 has no passwords, Keystore, encryption dependency, media service, alarm receiver or exact-alarm permission.
+The app declares `INTERNET` and, for Android 17 / API 37 and newer, `ACCESS_LOCAL_NETWORK`. The latter is necessary for direct LAN sockets at the existing target SDK 37. Until it is granted, server connections show an actionable permission error; the user can request access from the Servers screen. Permission changes are rechecked when the Activity resumes. See [Android local network permission](https://developer.android.com/privacy-and-security/local-network-permission). Direct MPD TCP is potentially unencrypted. Use a trusted LAN or a separately configured secure tunnel; the app never publishes ports or configures the server. M4 adds FOREGROUND_SERVICE, FOREGROUND_SERVICE_MEDIA_PLAYBACK and WAKE_LOCK for Media3 background audio. Media-session notifications are exempt from the Android 13 notification runtime permission, so POST_NOTIFICATIONS is not requested. There are still no passwords, Keystore, encryption dependency, alarm receiver or exact-alarm permission.
 
-HTTP cleartext opt-in is intentionally deferred until HTTP playback exists. It must accommodate user-configured hosts deliberately. Reference: [Android network security configuration](https://developer.android.com/privacy-and-security/security-config#CleartextTrafficPermitted). Existing Android backup settings are preserved; credential storage and backup exclusions must be designed before password support is introduced.
+`network_security_config.xml` deliberately enables cleartext in the base configuration. User profiles permit arbitrary hostnames, IPv4 and IPv6; Android static domain configuration cannot enumerate future user-entered endpoints at runtime. This application-wide opt-in is limited in purpose to the manually enabled HTTP receiver; no credentials are sent and there is no WebView, telemetry or other HTTP feature. It does not secure the LAN transport. Reference: [Android network security configuration](https://developer.android.com/privacy-and-security/security-config#CleartextTrafficPermitted). Existing Android backup settings are preserved; credential storage and backup exclusions must be designed before password support is introduced.
 
 ## Later milestones
 
 MPD queue/status snapshots and directory listings are not stored as a local playlist or music library.
-
-HTTP reception is separate from MPD remote control. A later Media3/MediaSessionService will receive one manually enabled stream, with local Android volume independent of MPD volume. Fresh startup leaves it off; disabling local audio does not pause MPD. Buffering can lag behind server metadata/progress. No audio dependency, service or cleartext opt-in is added in M2.
 
 One future sleep timer uses `AlarmManager.setAndAllowWhileIdle()` without exact-alarm permission and sends `pause 1` to the bound server. It works without local audio and must report delayed/failed delivery honestly. M2 exposes only an unavailable settings entry, with no timer infrastructure.
 
@@ -116,7 +133,7 @@ One future sleep timer uses `AlarmManager.setAndAllowWhileIdle()` without exact-
 
 1. Password storage/authentication and backup/device-transfer exclusions.
 2. Paging/windowing for exceptionally large queues; minimum supported MPD protocol version.
-3. Stream URL/path, supported encoders, cleartext configuration, reconnection and MediaSession command mapping.
+3. Additional HTTP encoder/device validation; M4 intentionally supports only a root-path stream and a read-only system session.
 4. Timer behavior when its profile is edited/deleted, device reboot/force-stop, failure presentation and tightly bounded retries. Do not reuse monotonic deadlines across device reboot.
 5. Optional directory refresh/database-event observation and paging for exceptionally large listings.
 
@@ -128,4 +145,15 @@ M3 JVM tests cover mixed lsinfo records, missing metadata, skipped playlists, ex
 
 Android tests cover the ICU ACK regression, player/queue parsing and controlled Compose fixtures for tabs, swipes, empty state, queue selection/actions, settings and seek dragging. Additional controlled ViewModel/UI fixtures cover setup, probe/save, header selection, handle-only dragging, deletion, appearance and launcher-resource rendering. They do not access a real MPD server or stored profiles.
 
-Instrumented tests use the `deviceTest` build type with application-ID suffix `.devicetest`; the normal app is not their install/uninstall target. The same source is used for the debug APK and JVM tests. Because this project's AGP exposes unit tests for the configured test build type, the JVM task is `testDeviceTestUnitTest`. The existing Compose UI test manifest is reused only for the isolated test host. No new dependency coordinates or permissions are introduced.
+Instrumented tests use the `deviceTest` build type with application-ID suffix `.devicetest`; the normal app is not their install/uninstall target. The same source is used for the debug APK and JVM tests. Because this project's AGP exposes unit tests for the configured test build type, the JVM task is `testDeviceTestUnitTest`. The existing Compose UI test manifest is reused only for the isolated test host. M4 adds only the two Media3 dependency coordinates and the permissions described above.
+
+
+### M4 verification and acceptance limits
+
+JVM coverage includes hostname/IPv4/IPv6/IDN URL construction and rejected profiles, manual intent, connect/buffer/ready/off/error state changes, manual retry, stale generation callbacks, metadata updates, connection loss and synchronous release before server switching/reconnect. ViewModel tests prove local enable/disable does not send MPD commands. Android tests use a generated CC0 mono 44.1 kHz / 128 kbit/s MP3 tone over an in-process HTTP server and a read-only MPD fixture. They cover real decoding, buffering, initial MPD pause, pause/resume, HTTP 503, stalled HTTP/read timeout, no retries, Activity recreation without another HTTP request, Home/screen-off reception, foreground/service/socket shutdown, reconnect/deletion, MPD metadata/unknown stream duration, rejected MediaController commands and media keys, transient/permanent audio focus and unauthorized service/controller starts. Compose tests cover the independent listening switch, status/error/retry and disconnected state. Fixtures only write to the isolated test app's profiles.
+
+`LiveStreamReadOnlyTest` is optional and skipped without explicit `readOnlyStreamHost` instrumentation arguments (optional `readOnlyMpdPort` / `readOnlyStreamPort`). It never persists its endpoint. It passively reads HTTP and starts only repository read/idle traffic, then prepares the local decoder. It never invokes MPD transport/queue/options/volume/output mutations and makes no claim to restore concurrently changed server state. Do not use a physical device for this test. The live server's paused state proves neither audible music nor end-to-end speaker output.
+
+Emulator validation uses the existing Medium Phone AVD, API 36, and the `.devicetest` app. Hardware Bluetooth/headphone switching, actual becoming-noisy delivery and audibility on a phone remain manual acceptance checks; a shell broadcast is not a substitute for a genuine route change. API 31/37 runtime behavior is built/linted but not exercised on those OS versions in this run. HTTP/MPD reachability, encoder support, stream latency, OEM battery policies and long-pause/background focus restrictions remain environmental limits. M5 and password support are not implemented.
+
+Verified on 2026-11-22: debug build, all 90 JVM tests, the complete 36-test Android fixture suite and a subsequent focused eight-test service run passed on Medium Phone / API 36. Lint completed with zero errors and 19 warnings (including the deliberate cleartext configuration and existing dependency/resource warnings); diff whitespace checks passed. The separate opt-in live test also passed: HTTP 200 / audio/mpeg, 16,384 bytes received by Android and Media3 ready in WAITING_FOR_MPD while the server reported PAUSED. A NUC-only passive HTTP check received 65,536 bytes. No live MPD mutations, SSH, physical-device testing or writes to normal app profiles were performed. This does not verify audible music, physical routing, minimum-API runtime behavior or API 37 permission enforcement.

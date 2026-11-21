@@ -14,12 +14,15 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.github.jschbe.simplempdplayer.R
+import com.github.jschbe.simplempdplayer.audio.StreamPhase
+import com.github.jschbe.simplempdplayer.audio.StreamError
+import com.github.jschbe.simplempdplayer.mpd.ConnectionStatus
 import com.github.jschbe.simplempdplayer.ServersUiState
 import com.github.jschbe.simplempdplayer.mpd.PlaybackState
 import com.github.jschbe.simplempdplayer.mpd.PlayerAction
 
 @Composable
-internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (PlayerAction) -> Unit) {
+internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (PlayerAction) -> Unit, onLocalListening: (Boolean) -> Unit = {}) {
     val snapshot = state.connection.snapshot
     val status = snapshot?.status
     val song = snapshot?.currentSong
@@ -49,6 +52,7 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
             PlaybackState.STOPPED -> R.string.stopped
             else -> R.string.playback_unknown
         }))
+        LocalListening(state, onLocalListening)
         if (duration != null && state.positionSeconds != null) {
             val position = draggedPosition?.toDouble() ?: state.positionSeconds
             Slider(
@@ -123,4 +127,42 @@ private fun PlaybackButton(@DrawableRes icon: Int, @StringRes label: Int, enable
 internal fun TimeText(seconds: Double) {
     val total = seconds.toLong().coerceAtLeast(0)
     Text(stringResource(R.string.time_minutes_seconds, total / 60, total % 60), style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable
+private fun LocalListening(state: ServersUiState, onChange: (Boolean) -> Unit) {
+    val audio = state.localStream
+    OutlinedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.listen_on_phone), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Switch(
+                    checked = audio.enabled,
+                    onCheckedChange = onChange,
+                    enabled = audio.enabled || (state.connection.status == ConnectionStatus.CONNECTED && !state.saving),
+                    modifier = Modifier.testTag("local_listening_switch"),
+                )
+            }
+            Text(stringResource(when (audio.phase) {
+                StreamPhase.OFF -> R.string.stream_off
+                StreamPhase.CONNECTING -> R.string.stream_connecting
+                StreamPhase.BUFFERING -> R.string.stream_buffering
+                StreamPhase.ACTIVE -> R.string.stream_active
+                StreamPhase.WAITING_FOR_MPD -> R.string.stream_waiting
+                StreamPhase.INTERRUPTED -> R.string.stream_interrupted
+                StreamPhase.ERROR -> when (audio.error) {
+                    StreamError.TIMEOUT -> R.string.stream_error_timeout
+                    StreamError.FORMAT -> R.string.stream_error_format
+                    StreamError.PERMISSION -> R.string.stream_error_permission
+                    StreamError.CONNECTION_LOST -> R.string.stream_error_connection
+                    StreamError.START_FAILED -> R.string.stream_error_start
+                    else -> R.string.stream_error_unavailable
+                }
+            }), style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("local_listening_status"))
+            Text(stringResource(R.string.stream_volume_hint), style = MaterialTheme.typography.bodySmall)
+            if (audio.phase == StreamPhase.ERROR && state.connection.status == ConnectionStatus.CONNECTED) {
+                TextButton(onClick = { onChange(true) }) { Text(stringResource(R.string.stream_retry)) }
+            }
+        }
+    }
 }
