@@ -1,7 +1,5 @@
 package com.github.jschbe.simplempdplayer.ui.theme
 
-import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -10,6 +8,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import com.github.jschbe.simplempdplayer.data.ThemeMode
 
 private val DarkColorScheme = darkColorScheme(
     primary = Purple80,
@@ -35,13 +34,18 @@ private val LightColorScheme = lightColorScheme(
 
 @Composable
 fun SimpleMPDPlayerTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    mode: ThemeMode = ThemeMode.SYSTEM,
+    darkTheme: Boolean = when (mode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    },
     // Dynamic color is available on Android 12+
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+        dynamicColor -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }

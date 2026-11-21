@@ -1,0 +1,60 @@
+package com.github.jschbe.simplempdplayer.data
+
+import java.net.IDN
+import java.net.URI
+import java.util.UUID
+
+data class ServerProfile(
+    val id: String,
+    val name: String,
+    val host: String,
+    val mpdPort: Int = 6600,
+    val streamPort: Int = 8000,
+) {
+    fun isValid(): Boolean = runCatching { UUID.fromString(id).toString() == id }.getOrDefault(false) &&
+        ServerInput(name, host, mpdPort.toString(), streamPort.toString()).errors().isEmpty()
+}
+
+enum class ProfileField { NAME, HOST, MPD_PORT, STREAM_PORT }
+
+data class ServerInput(
+    val name: String = "",
+    val host: String = "",
+    val mpdPort: String = "6600",
+    val streamPort: String = "8000",
+) {
+    fun errors(): Set<ProfileField> = buildSet {
+        if (name.isBlank() || name.any { it.isISOControl() }) add(ProfileField.NAME)
+        if (!validHost(host.trim())) add(ProfileField.HOST)
+        if (mpdPort.toIntOrNull() !in 1..65535) add(ProfileField.MPD_PORT)
+        if (streamPort.toIntOrNull() !in 1..65535) add(ProfileField.STREAM_PORT)
+    }
+
+    fun toProfile(id: String = UUID.randomUUID().toString()): ServerProfile? {
+        if (errors().isNotEmpty()) return null
+        val normalizedHost = host.trim().removeSurrounding("[", "]")
+        return ServerProfile(
+            id, name.trim(),
+            if (':' in normalizedHost) normalizedHost else IDN.toASCII(normalizedHost),
+            mpdPort.toInt(), streamPort.toInt(),
+        )
+    }
+}
+
+private fun validHost(host: String): Boolean {
+    if (host.isEmpty() || host.any { it.isWhitespace() || it.isISOControl() } ||
+        host.any { it in "/\\?#@" }
+    ) return false
+    if (':' in host) {
+        val address = host.removeSurrounding("[", "]")
+        return runCatching { URI("mpd://[$address]").host != null }.getOrDefault(false)
+    }
+    if (host.all { it.isDigit() || it == '.' }) {
+        val parts = host.split('.')
+        return parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 }
+    }
+    return runCatching {
+        val ascii = IDN.toASCII(host, IDN.USE_STD3_ASCII_RULES).removeSuffix(".")
+        ascii.isNotEmpty() && ascii.length <= 253 && ascii.split('.').all { it.isNotEmpty() }
+    }.getOrDefault(false)
+}

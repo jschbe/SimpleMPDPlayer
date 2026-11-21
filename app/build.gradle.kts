@@ -20,6 +20,11 @@ android {
     }
 
     buildTypes {
+        create("deviceTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".devicetest"
+            matchingFallbacks += "debug"
+        }
         release {
             optimization {
                 enable = true
@@ -27,6 +32,7 @@ android {
             }
         }
     }
+    testBuildType = "deviceTest"
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -45,11 +51,17 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    add("deviceTestImplementation", libs.androidx.compose.ui.test.manifest)
 }
