@@ -13,6 +13,9 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import com.github.jschbe.simplempdplayer.mpd.*
 import kotlin.concurrent.thread
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.withLock
@@ -49,7 +52,10 @@ class SleepTimerAndroidTest {
     }
 
     @Test fun scheduleCancelRestoreAndPermissionsUseOnlyOneInexactAlarm() = runBlocking {
-        app.sleepTimer.setEnabled(true)
+        val timer = SleepTimerController(storage, profiles.settings, clock, scheduler, profileMutationLock,
+            pause = { error("No delivery") }, playback = { TimerPlayback(target, ConnectionState(ConnectionStatus.CONNECTED,
+                snapshot = MpdSnapshot(MpdStatus(playback = PlaybackState.PLAYING), null, emptyList(), 0))) })
+        timer.setEnabled(true)
         val record = storage.read().record!!
         assertTrue(scheduler.hasPendingIntent())
         assertEquals(TimerStatus.ACTIVE, record.status)
@@ -58,7 +64,7 @@ class SleepTimerAndroidTest {
         restored.refresh()
         assertEquals(record.token, restored.state.value.settings.record!!.token)
         assertEquals(record.deadline, restored.state.value.settings.record!!.deadline)
-        app.sleepTimer.setMinutes(15)
+        timer.setMinutes(15)
         assertNotEquals(record.token, storage.read().record!!.token)
         assertEquals(15, storage.read().minutes)
         app.sleepTimer.setEnabled(false)
@@ -70,6 +76,23 @@ class SleepTimerAndroidTest {
         assertFalse("android.permission.RECEIVE_BOOT_COMPLETED" in permissions)
         val receiver = app.packageManager.getReceiverInfo(android.content.ComponentName(app, SleepTimerReceiver::class.java), 0)
         assertFalse(receiver.exported)
+    }
+
+    @Test fun waitingStateRestoresWithoutAlarmOrUnsolicitedDelivery() = runBlocking {
+        app.sleepTimer.setEnabled(true)
+        val waiting = storage.read().record!!
+        assertEquals(TimerStatus.WAITING, waiting.status)
+        assertNull(waiting.deadline)
+        assertFalse(scheduler.hasPendingIntent())
+        val restored = SleepTimerController(storage, profiles.settings, clock, scheduler, profileMutationLock,
+            pause = { error("Waiting must never deliver") })
+        restored.refresh()
+        restored.fire(waiting.token)
+        assertEquals(waiting, restored.state.value.settings.record)
+        assertFalse(scheduler.hasPendingIntent())
+        assertTrue(mpd.mutations.isEmpty())
+        app.sleepTimer.setEnabled(false)
+        assertFalse(scheduler.hasPendingIntent())
     }
 
     @Test fun pendingIntentExecutesPauseOnceWithoutActivityOrLocalAudio() = runBlocking {
@@ -154,6 +177,9 @@ internal class TimerMpdFixture : AutoCloseable {
     val port = server.localPort
     val allCommands = CopyOnWriteArrayList<String>()
     val mutations = CopyOnWriteArrayList<String>()
+    private val events = LinkedBlockingQueue<Unit>()
+    @Volatile private var playbackState = "stop"
+    fun playback(value: String) { playbackState = value; events.offer(Unit) }
     @Volatile var ackCode: Int? = null
     @Volatile var holdAcknowledgement = false
     @Volatile private var closed = false
@@ -180,9 +206,16 @@ internal class TimerMpdFixture : AutoCloseable {
                                         if (code == null) send("OK\n") else send("ACK [$code@0] {pause} Private detail\n")
                                     }
                                     "ping" -> send("OK\n")
-                                    "status" -> send("state: stop\nplaylist: 1\nplaylistlength: 0\nOK\n")
+                                    "status" -> send("state: $playbackState\nplaylist: 1\nplaylistlength: 0\nOK\n")
                                     "currentsong", "playlistinfo" -> send("OK\n")
-                                    "idle" -> { while (!closed && !socket.isClosed) Thread.sleep(10); break }
+                                    "idle" -> {
+                                        while (!closed && !socket.isClosed) {
+                                            if (events.poll(100, TimeUnit.MILLISECONDS) != null) {
+                                                send("changed: player\nOK\n")
+                                                break
+                                            }
+                                        }
+                                    }
                                     else -> { mutations.add(command); send("ACK [5@0] {} Unsupported\n") }
                                 }
                             }

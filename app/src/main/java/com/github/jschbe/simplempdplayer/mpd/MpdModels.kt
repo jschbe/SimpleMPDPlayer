@@ -1,6 +1,8 @@
 package com.github.jschbe.simplempdplayer.mpd
 
 enum class PlaybackState { PLAYING, PAUSED, STOPPED, UNKNOWN }
+enum class RepeatMode { NONE, QUEUE, SINGLE }
+enum class SingleMode { OFF, ON, ONESHOT, UNKNOWN }
 
 data class MpdStatus(
     val playback: PlaybackState = PlaybackState.UNKNOWN,
@@ -9,10 +11,20 @@ data class MpdStatus(
     val duration: Double? = null,
     val volume: Int? = null,
     val random: Boolean = false,
-    val repeat: Boolean = false,
+    val repeat: Boolean? = null,
+    val single: SingleMode = SingleMode.UNKNOWN,
     val queueVersion: Long? = null,
     val queueLength: Int? = null,
-)
+) {
+    /** Unsupported combinations stay visible without changing the server on read. */
+    val repeatMode: RepeatMode?
+        get() = when {
+            repeat == false && single == SingleMode.OFF -> RepeatMode.NONE
+            repeat == true && single == SingleMode.OFF -> RepeatMode.QUEUE
+            repeat == true && single == SingleMode.ON -> RepeatMode.SINGLE
+            else -> null
+        }
+}
 
 data class MpdSong(
     val id: Long?,
@@ -52,13 +64,13 @@ sealed interface PlayerAction {
     data class Seek(val seconds: Double, val songId: Long?) : PlayerAction
     data class Volume(val value: Int) : PlayerAction
     data class Random(val enabled: Boolean) : PlayerAction
-    data class Repeat(val enabled: Boolean) : PlayerAction
+    data class Repeat(val mode: RepeatMode) : PlayerAction
     data class PlayId(val id: Long) : PlayerAction
     data class DeleteId(val id: Long) : PlayerAction
     data class MoveId(val id: Long, val offset: Int) : PlayerAction
 }
 
-/** Missing metadata is normal; malformed identities/status numbers are protocol errors. */
+/** Missing metadata/options stay unknown; malformed identities and queue numbers are protocol errors. */
 internal object MpdData {
     fun status(fields: List<Pair<String, String>>): MpdStatus {
         val values = fields.toMap()
@@ -74,7 +86,13 @@ internal object MpdData {
             duration = values["duration"].seconds(),
             volume = values["volume"]?.toIntOrNull()?.takeIf { it in 0..100 },
             random = values.flag("random"),
-            repeat = values.flag("repeat"),
+            repeat = when (values["repeat"]) { "0" -> false; "1" -> true; else -> null },
+            single = when (values["single"]) {
+                "0" -> SingleMode.OFF
+                "1" -> SingleMode.ON
+                "oneshot" -> SingleMode.ONESHOT
+                else -> SingleMode.UNKNOWN
+            },
             queueVersion = values.nonNegativeLong("playlist"),
             queueLength = values.nonNegativeLong("playlistlength")?.let {
                 if (it > Int.MAX_VALUE) throw InvalidMpdResponse()

@@ -2,6 +2,8 @@ package com.github.jschbe.simplempdplayer.timer
 
 import com.github.jschbe.simplempdplayer.data.ServerSettings
 import com.github.jschbe.simplempdplayer.data.ServerProfile
+import com.github.jschbe.simplempdplayer.mpd.ConnectionStatus
+import com.github.jschbe.simplempdplayer.mpd.PlaybackState
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -19,6 +21,7 @@ class SleepTimerController(
     private val scheduler: TimerScheduler,
     private val mutationLock: Mutex,
     private val pause: suspend (ServerProfile) -> TimerError?,
+    private val playback: () -> TimerPlayback? = { null },
 ) {
     private val mutableState = MutableStateFlow(SleepTimerState())
     val state = mutableState.asStateFlow()
@@ -26,7 +29,12 @@ class SleepTimerController(
     private var observation: kotlinx.coroutines.Job? = null
     private var ownerScope: CoroutineScope? = null
 
-    fun retry() { ownerScope?.let { observe(it) } }
+    fun retry() {
+        ownerScope?.let { scope ->
+            // Foreground/retry must not cancel an in-flight WAITING -> ARMING commit.
+            if (observation?.isActive == true) scope.launch { refresh() } else observe(scope)
+        }
+    }
 
     fun observe(scope: CoroutineScope) {
         ownerScope = scope
@@ -59,6 +67,14 @@ class SleepTimerController(
                 scheduler.cancel()
             }
         } else scheduler.cancel()
+        val waiting = saved.record?.takeIf { it.status == TimerStatus.WAITING }
+        if (waiting != null) {
+            scheduler.cancel()
+            if (isPlaying(waiting.target)) {
+                startCountdown(saved, waiting.target, servers)
+                return@operation
+            }
+        }
         publish(saved, servers)
     }
 
@@ -66,7 +82,7 @@ class SleepTimerController(
         val saved = store.read()
         val servers = profiles.first().also { if (it.readFailed) throw IOException() }
         if (enabled) {
-            if (saved.record?.status == TimerStatus.ACTIVE) { publish(saved, servers); return@operation }
+            if (saved.record?.pending == true) { publish(saved, servers); return@operation }
             val target = servers.servers.find { it.id == servers.selectedId } ?: return@operation
             arm(saved, target, servers)
         } else {
@@ -85,7 +101,7 @@ class SleepTimerController(
             if (saved.minutes == minutes) { publish(saved, servers); return@operation }
             val changed = saved.copy(minutes = minutes)
             val old = saved.record
-            if (old?.status == TimerStatus.ACTIVE && old.matches(servers.servers.find { it.id == old.target.id })) {
+            if (old != null && old.status in setOf(TimerStatus.WAITING, TimerStatus.ACTIVE) && old.matches(servers.servers.find { it.id == old.target.id })) {
                 // Changing duration keeps the originally bound server, even after selecting another.
                 arm(changed, old.target, servers)
             } else {
@@ -95,7 +111,34 @@ class SleepTimerController(
         }
     }
 
+    /** Status notifications carry no snapshot: read current authority only after acquiring the lock. */
+    suspend fun playbackChanged() {
+        if (state.value.waiting) refresh()
+    }
+
+    private fun isPlaying(target: ServerProfile): Boolean {
+        val current = playback() ?: return false
+        return current.server.id == target.id && current.server.host == target.host &&
+            current.server.mpdPort == target.mpdPort && current.server.streamPort == target.streamPort &&
+            current.connection.status == ConnectionStatus.CONNECTED && !current.connection.waitingForNetwork &&
+            current.connection.snapshot?.status?.playback == PlaybackState.PLAYING
+    }
+
     private suspend fun arm(saved: TimerSettings, target: ServerProfile, servers: ServerSettings) {
+        if (isPlaying(target)) {
+            startCountdown(saved, target, servers)
+        } else {
+            val boot = clock.boot()
+            if (boot == null) { mutableState.update { it.copy(operationError = TimerError.CLOCK) }; return }
+            val record = TimerRecord(UUID.randomUUID().toString(), target, boot, clock.elapsed(), null, TimerStatus.WAITING)
+            val waiting = saved.copy(record = record, recovered = false)
+            store.write(waiting)
+            scheduler.cancel()
+            publish(waiting, servers)
+        }
+    }
+
+    private suspend fun startCountdown(saved: TimerSettings, target: ServerProfile, servers: ServerSettings) {
         val boot = clock.boot()
         if (boot == null) { mutableState.update { it.copy(operationError = TimerError.CLOCK) }; return }
         val now = clock.elapsed()
@@ -141,7 +184,7 @@ class SleepTimerController(
             store.write(saved); scheduler.cancel(); publish(saved, servers)
             return@operation
         }
-        if (clock.elapsed() < record.deadline) return@operation
+        if (clock.elapsed() < requireNotNull(record.deadline)) return@operation
         delivering = record.token
         try {
             saved = saved.copy(record = record.copy(status = TimerStatus.DELIVERING))
@@ -159,7 +202,7 @@ class SleepTimerController(
     /** UI-only calculation; never moves the elapsed deadline or schedules another alarm. */
     fun tick() {
         val record = mutableState.value.settings.record
-        val untilDeadline = record?.takeIf { it.status == TimerStatus.ACTIVE }?.let { it.deadline - clock.elapsed() }
+        val untilDeadline = record?.takeIf { it.status == TimerStatus.ACTIVE }?.let { it.deadline?.minus(clock.elapsed()) }
         mutableState.update { it.copy(remainingMillis = untilDeadline?.coerceAtLeast(0),
             estimatedEndMillis = untilDeadline?.let { time -> clock.wallTime() + time }) }
     }

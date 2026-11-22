@@ -29,11 +29,11 @@ class SleepTimerProcessProbe {
         app.sleepTimer.setMinutes(15)
         app.sleepTimer.setEnabled(true)
         val record = SleepTimerStore(app.sleepTimerDataStore).read().record!!
-        assertEquals(TimerStatus.ACTIVE, record.status)
-        assertTrue(AndroidTimerScheduler(app).hasPendingIntent())
+        assertEquals(TimerStatus.WAITING, record.status)
+        assertFalse(AndroidTimerScheduler(app).hasPendingIntent())
         InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
             putString("timerToken", record.token)
-            putLong("timerDeadline", record.deadline)
+            putString("timerStatus", record.status.name)
         })
     }
     @Test fun cleanup() = runBlocking {

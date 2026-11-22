@@ -48,6 +48,7 @@ fun ServersApp(
     onSleepEnabled: (Boolean) -> Unit = {},
     onSleepMinutes: (Int) -> Unit = {},
     onSleepRetry: () -> Unit = {},
+    onTrackInfoExpanded: (Boolean) -> Unit = {},
 ) {
     val pager = rememberPagerState(initialPage = 1, pageCount = { 3 })
     val scope = rememberCoroutineScope()
@@ -177,7 +178,7 @@ fun ServersApp(
                 HorizontalPager(state = pager, modifier = Modifier.weight(1f).testTag("main_pager")) { page ->
                     when (page) {
                         0 -> BrowserScreen(state.browser, connected, controlsEnabled, onBrowse, onEnqueue)
-                        1 -> PlayerScreen(state, controlsEnabled, onAction, onLocalListening)
+                        1 -> PlayerScreen(state, controlsEnabled, onAction, onLocalListening, onTrackInfoExpanded)
                         2 -> QueueScreen(
                             state.connection.snapshot, state.settings.selectedId,
                             controlsEnabled, pager.settledPage == 2, onAction,

@@ -21,7 +21,7 @@ class SleepTimerStoreTest {
         val longName = record.copy(target = target.copy(name = "A".repeat(5000)))
         assertEquals(longName, TimerCodec.decode(TimerCodec.encode(longName)))
         TimerStatus.entries.forEach { status ->
-            val original = record.copy(status = status, error = if (status == TimerStatus.FAILED) TimerError.UNCERTAIN else null)
+            val original = record.copy(status = status, deadline = if (status == TimerStatus.WAITING) null else record.deadline, error = if (status == TimerStatus.FAILED) TimerError.UNCERTAIN else null)
             assertEquals(original, TimerCodec.decode(TimerCodec.encode(original)))
         }
         listOf("", "garbage", TimerCodec.encode(record).replace(record.token, "not-a-token"),
@@ -41,6 +41,9 @@ class SleepTimerStoreTest {
         }
         withStore { it.write(TimerSettings(45, record)) }
         withStore { assertEquals(TimerSettings(45, record), it.read()) }
+        val waiting = record.copy(status = TimerStatus.WAITING, deadline = null)
+        withStore { it.write(TimerSettings(60, waiting)) }
+        withStore { assertEquals(TimerSettings(60, waiting), it.read()) }
     }
 
     @Test fun corruptTypesAreRecoverableButOrdinaryReadFailureDoesNotWriteDefaults() = runTest {

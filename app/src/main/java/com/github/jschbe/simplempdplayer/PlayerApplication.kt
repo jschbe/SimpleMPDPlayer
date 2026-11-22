@@ -25,7 +25,7 @@ class PlayerApplication : Application() {
 
     // Shared while the process lives: background metadata must not depend on an Activity's collectors.
     private val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    val sleepTimer by lazy {
+    val sleepTimer: SleepTimerController by lazy {
         SleepTimerController(SleepTimerStore(sleepTimerDataStore), ServerSettingsStore(serverDataStore).settings,
             AndroidTimerClock(this), AndroidTimerScheduler(this), profileMutationLock,
             pause = {
@@ -33,11 +33,17 @@ class PlayerApplication : Application() {
                     checkSelfPermission(android.Manifest.permission.ACCESS_LOCAL_NETWORK) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     TimerError.PERMISSION
                 } else MpdRepository.pauseForTimer(it, ::resolveTimerHost)
+            }, playback = {
+                if (!repositoryDelegate.isInitialized()) null else repository.activeServer?.let { TimerPlayback(it, repository.state.value) }
             })
     }
-    val repository by lazy {
-        MpdRepository(playbackScope).also { com.github.jschbe.simplempdplayer.mpd.MpdNetworkObserver(this, it::networkChanged).start() }
+    private val repositoryDelegate: Lazy<MpdRepository> = lazy {
+        MpdRepository(playbackScope).also { repository ->
+            com.github.jschbe.simplempdplayer.mpd.MpdNetworkObserver(this, repository::networkChanged).start()
+            playbackScope.launch { repository.state.collect { sleepTimer.playbackChanged() } }
+        }
     }
+    val repository: MpdRepository get() = repositoryDelegate.value
     val streamBackend by lazy { AndroidStreamBackend(this) }
     val localStream by lazy {
         LocalStreamController(streamBackend).also { stream ->

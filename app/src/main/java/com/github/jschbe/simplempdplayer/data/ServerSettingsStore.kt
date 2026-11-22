@@ -21,6 +21,7 @@ internal val profileMutationLock = Mutex()
 private val profilesKey = stringPreferencesKey("server_profiles_v1")
 private val selectedKey = stringPreferencesKey("selected_server_id")
 private val recoveredKey = booleanPreferencesKey("recovered_corrupt_file")
+private val trackInfoKey = booleanPreferencesKey("track_info_expanded")
 private val themeKey = stringPreferencesKey("theme_mode")
 
 val Context.serverDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -55,6 +56,8 @@ class ServerSettingsStore(private val dataStore: DataStore<Preferences>) {
         current.copy(servers = ordered + current.servers.filterNot { it.id in ids })
     }
 
+    suspend fun setTrackInfoExpanded(expanded: Boolean) = change { it.copy(trackInfoExpanded = expanded) }
+
     suspend fun setTheme(mode: ThemeMode) = change { it.copy(theme = mode) }
 
     suspend fun select(id: String) = change { current ->
@@ -76,6 +79,7 @@ class ServerSettingsStore(private val dataStore: DataStore<Preferences>) {
             changed.selectedId?.let { preferences[selectedKey] = it } ?: preferences.remove(selectedKey)
             preferences.remove(recoveredKey)
             preferences[themeKey] = changed.theme.name
+            preferences[trackInfoKey] = changed.trackInfoExpanded
         }
     }
 
@@ -87,8 +91,9 @@ class ServerSettingsStore(private val dataStore: DataStore<Preferences>) {
         val decoded = ServerSettingsCodec.decode(profiles as? String, selected as? String)
         val rawTheme = values[themeKey.name]
         val theme = ThemeMode.entries.find { it.name == rawTheme }
-        return decoded.copy(theme = theme ?: ThemeMode.SYSTEM, recovered = decoded.recovered ||
-            (rawTheme != null && theme == null) || values[recoveredKey.name] == true ||
+        val expanded = values[trackInfoKey.name]
+        return decoded.copy(theme = theme ?: ThemeMode.SYSTEM, trackInfoExpanded = expanded as? Boolean ?: true, recovered = decoded.recovered ||
+            (rawTheme != null && theme == null) || (expanded != null && expanded !is Boolean) || values[recoveredKey.name] == true ||
             (profiles != null && profiles !is String) || (selected != null && selected !is String))
     }
 }

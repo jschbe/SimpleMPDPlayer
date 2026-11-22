@@ -8,6 +8,7 @@ data class ServerSettings(
     val recovered: Boolean = false,
     val readFailed: Boolean = false,
     val theme: ThemeMode = ThemeMode.SYSTEM,
+    val trackInfoExpanded: Boolean = true,
 )
 
 /** Version 1: one tab-separated profile per line; control characters are invalid input. */

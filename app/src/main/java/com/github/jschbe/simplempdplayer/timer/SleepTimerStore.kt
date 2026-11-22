@@ -53,14 +53,14 @@ internal object TimerCodec {
         require(record.valid())
         return with(record) {
             listOf(token, target.id, target.name, target.host, target.mpdPort, target.streamPort,
-                boot, started, deadline, status.name, error?.name.orEmpty()).joinToString("\t")
+                boot, started, deadline?.toString().orEmpty(), status.name, error?.name.orEmpty()).joinToString("\t")
         }
     }
     fun decode(text: String): TimerRecord? = runCatching {
         val f = text.split('\t')
         require(f.size == 11)
         TimerRecord(f[0], ServerProfile(f[1], f[2], f[3], f[4].toInt(), f[5].toInt()),
-            f[6].toInt(), f[7].toLong(), f[8].toLong(), TimerStatus.valueOf(f[9]),
+            f[6].toInt(), f[7].toLong(), f[8].takeIf { it.isNotEmpty() }?.toLong(), TimerStatus.valueOf(f[9]),
             f[10].takeIf { it.isNotEmpty() }?.let(TimerError::valueOf)).also { require(it.valid()) }
     }.getOrNull()
 }

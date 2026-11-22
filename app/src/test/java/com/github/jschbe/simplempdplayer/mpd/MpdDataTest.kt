@@ -13,7 +13,7 @@ class MpdDataTest {
         assertEquals(180.5, status.duration!!, 0.001)
         assertEquals(65, status.volume)
         assertTrue(status.random)
-        assertFalse(status.repeat)
+        assertEquals(false, status.repeat)
         assertEquals(9L, status.queueVersion)
         assertNull(MpdData.status(fields("volume" to "-1")).volume)
         assertNull(MpdData.status(emptyList()).volume)

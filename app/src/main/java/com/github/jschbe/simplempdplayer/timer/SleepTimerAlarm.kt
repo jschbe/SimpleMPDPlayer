@@ -37,7 +37,7 @@ class AndroidTimerScheduler(private val context: Context) : TimerScheduler {
     override fun schedule(record: TimerRecord) {
         val pending = PendingIntent.getBroadcast(context, REQUEST, intent().putExtra(TOKEN, record.token),
             PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        alarms.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, record.deadline, pending)
+        alarms.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, requireNotNull(record.deadline), pending)
     }
     override fun cancel() {
         existing()?.let { alarms.cancel(it); it.cancel() }

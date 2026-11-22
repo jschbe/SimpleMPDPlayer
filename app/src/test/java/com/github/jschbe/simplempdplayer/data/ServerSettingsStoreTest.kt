@@ -47,6 +47,37 @@ class ServerSettingsStoreTest {
         }
     }
 
+    @Test fun trackInfoExpansionDefaultsToTrueAndSurvivesReloadAndUnrelatedWrites() = runBlocking {
+        val file = folder.newFolder().resolve("track.preferences_pb")
+        withStore(file) { store, _ ->
+            assertTrue(store.settings.first().trackInfoExpanded)
+            store.saveAndSelect(profile)
+            store.setTrackInfoExpanded(false)
+            store.setTheme(ThemeMode.DARK)
+        }
+        withStore(file) { store, _ ->
+            assertFalse(store.settings.first().trackInfoExpanded)
+            store.save(profile.copy(name = "Renamed"))
+            assertFalse(store.settings.first().trackInfoExpanded)
+            assertEquals(profile.id, store.settings.first().selectedId)
+            store.setTrackInfoExpanded(true)
+        }
+        withStore(file) { store, _ -> assertTrue(store.settings.first().trackInfoExpanded) }
+    }
+
+    @Test fun malformedTrackInfoPreferenceRecoversWithoutLosingProfiles() = runBlocking {
+        withStore { store, data ->
+            store.saveAndSelect(profile)
+            data.edit { it[stringPreferencesKey("track_info_expanded")] = "invalid" }
+            val saved = store.settings.first()
+            assertTrue(saved.trackInfoExpanded)
+            assertTrue(saved.recovered)
+            assertEquals(listOf(profile), saved.servers)
+            store.setTrackInfoExpanded(false)
+            assertFalse(store.settings.first().recovered)
+        }
+    }
+
     @Test
     fun staleReorderCannotLoseNewProfilesOrRestoreDeletedProfiles() = runBlocking {
         withStore { store, _ ->

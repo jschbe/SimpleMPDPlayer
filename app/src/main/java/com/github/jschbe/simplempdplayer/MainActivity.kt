@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity() {
                     onTest = model::test,
                     onReorder = model::reorder,
                     onTheme = model::setTheme,
+                    onTrackInfoExpanded = model::setTrackInfoExpanded,
                     onReload = model::reloadSettings,
                     onGrantNetworkAccess = {
                         if (Build.VERSION.SDK_INT >= 37) {

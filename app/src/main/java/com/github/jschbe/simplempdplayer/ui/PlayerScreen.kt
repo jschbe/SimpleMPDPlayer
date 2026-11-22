@@ -3,16 +3,21 @@ package com.github.jschbe.simplempdplayer.ui
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.style.TextOverflow
 import com.github.jschbe.simplempdplayer.R
 import com.github.jschbe.simplempdplayer.audio.StreamPhase
 import com.github.jschbe.simplempdplayer.audio.StreamError
@@ -20,9 +25,12 @@ import com.github.jschbe.simplempdplayer.mpd.ConnectionStatus
 import com.github.jschbe.simplempdplayer.ServersUiState
 import com.github.jschbe.simplempdplayer.mpd.PlaybackState
 import com.github.jschbe.simplempdplayer.mpd.PlayerAction
+import com.github.jschbe.simplempdplayer.mpd.MpdStatus
+import com.github.jschbe.simplempdplayer.mpd.RepeatMode
+import com.github.jschbe.simplempdplayer.mpd.SingleMode
 
 @Composable
-internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (PlayerAction) -> Unit, onLocalListening: (Boolean) -> Unit = {}) {
+internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (PlayerAction) -> Unit, onLocalListening: (Boolean) -> Unit = {}, onTrackInfoExpanded: (Boolean) -> Unit = {}) {
     val snapshot = state.connection.snapshot
     val status = snapshot?.status
     val song = snapshot?.currentSong
@@ -37,22 +45,37 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
         Modifier.fillMaxSize().testTag("player_page").verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        if (song != null) {
-            Text(song.title, style = MaterialTheme.typography.headlineMedium)
-            if (song.artists.isNotEmpty()) Text(song.artists.joinToString(stringResource(R.string.metadata_separator)), style = MaterialTheme.typography.titleMedium)
-            if (song.albums.isNotEmpty()) Text(song.albums.joinToString(stringResource(R.string.metadata_separator)), style = MaterialTheme.typography.bodyMedium)
-        } else if (snapshot != null && !hasQueue) {
-            Text(stringResource(R.string.queue_empty), style = MaterialTheme.typography.headlineSmall)
-        } else {
-            Text(stringResource(R.string.no_current_song), style = MaterialTheme.typography.headlineSmall)
+        val expanded = state.settings.trackInfoExpanded
+        val expandLabel = stringResource(if (expanded) R.string.track_info_collapse else R.string.track_info_expand)
+        val expandedDescription = stringResource(if (expanded) R.string.track_info_expanded else R.string.track_info_collapsed)
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("track_info_toggle")
+            .semantics { stateDescription = expandedDescription }
+            .clickable(enabled = !state.loading && !state.saving && !state.settings.readFailed,
+                role = Role.Button, onClickLabel = expandLabel) { onTrackInfoExpanded(!expanded) },
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(song?.title ?: stringResource(if (snapshot != null && !hasQueue) R.string.queue_empty else R.string.no_current_song),
+                    style = if (expanded) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleMedium,
+                    maxLines = if (expanded) 4 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("track_title"))
+                if (expanded) {
+                    if (!song?.artists.isNullOrEmpty()) Text(song.artists.joinToString(stringResource(R.string.metadata_separator)), style = MaterialTheme.typography.titleMedium)
+                    if (!song?.albums.isNullOrEmpty()) Text(song.albums.joinToString(stringResource(R.string.metadata_separator)), style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            Icon(painterResource(R.drawable.ic_expand), null, Modifier.padding(12.dp).rotate(if (expanded) 180f else 0f))
         }
-        Text(stringResource(when (status?.playback) {
-            PlaybackState.PLAYING -> R.string.playing
-            PlaybackState.PAUSED -> R.string.paused
-            PlaybackState.STOPPED -> R.string.stopped
-            else -> R.string.playback_unknown
-        }))
-        if (state.sleepTimer.active) SleepRemaining(state.sleepTimer)
+        Row(Modifier.fillMaxWidth().testTag("player_status_row"), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(when (status?.playback) {
+                PlaybackState.PLAYING -> R.string.playing
+                PlaybackState.PAUSED -> R.string.paused
+                PlaybackState.STOPPED -> R.string.stopped
+                else -> R.string.playback_unknown
+            }), Modifier.weight(1f).testTag("mpd_playback_status"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Box(Modifier.weight(1.5f).testTag("sleep_compact_status")) {
+                SleepRemaining(state.sleepTimer, Modifier.fillMaxWidth(), compact = true)
+            }
+        }
         if (state.sleepTimer.settings.record?.status == com.github.jschbe.simplempdplayer.timer.TimerStatus.FAILED ||
             state.sleepTimer.operationError != null) Text(stringResource(R.string.timer_player_error), style = MaterialTheme.typography.bodySmall)
         LocalListening(state, onLocalListening)
@@ -93,16 +116,7 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
             PlaybackButton(R.drawable.ic_stop, R.string.stop, enabled && hasQueue) { onAction(PlayerAction.Stop) }
             PlaybackButton(R.drawable.ic_next, R.string.next, enabled && hasQueue) { onAction(PlayerAction.Next) }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(stringResource(R.string.random))
-                Switch(checked = status?.random == true, onCheckedChange = { onAction(PlayerAction.Random(it)) }, enabled = enabled, modifier = Modifier.testTag("random_switch"))
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(stringResource(R.string.repeat))
-                Switch(checked = status?.repeat == true, onCheckedChange = { onAction(PlayerAction.Repeat(it)) }, enabled = enabled, modifier = Modifier.testTag("repeat_switch"))
-            }
-        }
+        key(state.settings.selectedId) { PlaybackOptions(status, enabled, onAction) }
         status?.volume?.let { volume ->
             Text(stringResource(R.string.mpd_volume, draggedVolume?.toInt() ?: volume))
             Slider(
@@ -121,6 +135,48 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PlaybackOptions(status: MpdStatus?, enabled: Boolean, onAction: (PlayerAction) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    LaunchedEffect(enabled) { if (!enabled) expanded = false }
+    FlowRow(Modifier.fillMaxWidth().testTag("playback_options"), maxItemsInEachRow = 2,
+        horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        val randomLabel = stringResource(R.string.random)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(randomLabel, Modifier.testTag("random_label"))
+            Switch(status?.random == true, { onAction(PlayerAction.Random(it)) }, enabled = enabled,
+                modifier = Modifier.testTag("random_switch").semantics { contentDescription = randomLabel })
+        }
+        Box {
+            val modeLabel = stringResource(status?.repeatMode?.label() ?: when {
+                status?.single == SingleMode.ONESHOT -> R.string.repeat_oneshot
+                status?.repeat == false && status.single == SingleMode.ON -> R.string.repeat_stop_after_track
+                else -> R.string.repeat_unknown
+            })
+            TextButton(onClick = { expanded = true }, enabled = enabled,
+                modifier = Modifier.width(IntrinsicSize.Max).testTag("repeat_dropdown").semantics { stateDescription = modeLabel }) {
+                Text(stringResource(R.string.repeat, modeLabel), Modifier.weight(1f, fill = false))
+                Icon(painterResource(R.drawable.ic_expand), null, Modifier.size(18.dp))
+            }
+            DropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
+                RepeatMode.entries.forEach { mode ->
+                    DropdownMenuItem(text = { Text(stringResource(mode.label())) },
+                        modifier = Modifier.testTag("repeat_option_${mode.name}").semantics { selected = status?.repeatMode == mode },
+                        onClick = { expanded = false; onAction(PlayerAction.Repeat(mode)) })
+                }
+            }
+        }
+    }
+}
+
+@StringRes
+private fun RepeatMode.label(): Int = when (this) {
+    RepeatMode.NONE -> R.string.repeat_none
+    RepeatMode.QUEUE -> R.string.repeat_queue
+    RepeatMode.SINGLE -> R.string.repeat_single
+}
+
 @Composable
 private fun PlaybackButton(@DrawableRes icon: Int, @StringRes label: Int, enabled: Boolean, action: () -> Unit) {
     IconButton(onClick = action, enabled = enabled) { Icon(painterResource(icon), stringResource(label)) }
@@ -135,10 +191,21 @@ internal fun TimeText(seconds: Double) {
 @Composable
 private fun LocalListening(state: ServersUiState, onChange: (Boolean) -> Unit) {
     val audio = state.localStream
+    var info by rememberSaveable { mutableStateOf(false) }
+    if (info) AlertDialog(onDismissRequest = { info = false },
+        title = { Text(stringResource(R.string.listen_on_phone)) },
+        text = { Text(stringResource(R.string.stream_info)) },
+        confirmButton = { TextButton(onClick = { info = false }) { Text(stringResource(R.string.done)) } })
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.listen_on_phone), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.listen_on_phone), Modifier.weight(1f, fill = false),
+                        maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                    IconButton(onClick = { info = true }, modifier = Modifier.testTag("local_listening_info")) {
+                        Icon(painterResource(R.drawable.ic_info), stringResource(R.string.stream_info_button))
+                    }
+                }
                 Switch(
                     checked = audio.enabled,
                     onCheckedChange = onChange,
@@ -162,7 +229,6 @@ private fun LocalListening(state: ServersUiState, onChange: (Boolean) -> Unit) {
                     else -> R.string.stream_error_unavailable
                 }
             }), style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("local_listening_status"))
-            Text(stringResource(R.string.stream_volume_hint), style = MaterialTheme.typography.bodySmall)
             if (audio.phase == StreamPhase.ERROR && state.connection.status == ConnectionStatus.CONNECTED) {
                 TextButton(onClick = { onChange(true) }) { Text(stringResource(R.string.stream_retry)) }
             }

@@ -98,7 +98,7 @@ class MpdRepositoryTest {
         runCurrent()
         val actions = listOf(
             PlayerAction.Random(true) to ("random" to listOf("1")),
-            PlayerAction.Repeat(false) to ("repeat" to listOf("0")),
+            PlayerAction.Repeat(RepeatMode.NONE) to ("repeat" to listOf("0")),
             PlayerAction.Volume(73) to ("setvol" to listOf("73")),
             PlayerAction.Seek(25.5, 11) to ("seekcur" to listOf("25.5")),
             PlayerAction.PlayId(12) to ("playid" to listOf("12")),

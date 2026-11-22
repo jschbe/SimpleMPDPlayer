@@ -2,6 +2,7 @@ package com.github.jschbe.simplempdplayer.timer
 
 import com.github.jschbe.simplempdplayer.data.*
 import java.io.IOException
+import com.github.jschbe.simplempdplayer.mpd.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
@@ -49,13 +50,172 @@ class SleepTimerControllerTest {
         val lock = Mutex()
         val targets = mutableListOf<ServerProfile>()
         var deliver: suspend () -> TimerError? = { null }
-        fun controller() = SleepTimerController(store, profiles, clock, scheduler, lock, pause = { targets.add(it); deliver() })
+        var playback: TimerPlayback? = TimerPlayback(first, ConnectionState(ConnectionStatus.CONNECTED,
+            snapshot = MpdSnapshot(MpdStatus(playback = PlaybackState.PLAYING), null, emptyList(), 0)))
+        fun controller() = SleepTimerController(store, profiles, clock, scheduler, lock, pause = { targets.add(it); deliver() }, playback = { playback })
         val timer = controller()
         suspend fun start(minutes: Int = 30): TimerRecord {
             timer.setMinutes(minutes); timer.setEnabled(true)
             return store.read().record!!
         }
-        suspend fun expire() { clock.now = store.read().record!!.deadline; timer.fire(store.read().record!!.token) }
+        suspend fun expire() { clock.now = requireNotNull(store.read().record!!.deadline); timer.fire(store.read().record!!.token) }
+    }
+
+    private fun confirmed(playback: PlaybackState, server: ServerProfile = first,
+        connection: ConnectionStatus = ConnectionStatus.CONNECTED) = TimerPlayback(server,
+        ConnectionState(connection, snapshot = MpdSnapshot(MpdStatus(playback = playback), null, emptyList(), 0)))
+
+    @Test fun enablingWithoutConfirmedPlayWaitsWithoutDeadlineOrAlarm() = runTest {
+        for (status in listOf(PlaybackState.PAUSED, PlaybackState.STOPPED, PlaybackState.UNKNOWN)) {
+            val f = Fixture(); f.playback = confirmed(status)
+            val record = f.start()
+            assertEquals(TimerStatus.WAITING, record.status)
+            assertNull(record.deadline)
+            assertTrue(record.valid())
+            assertTrue(f.timer.state.value.enabled)
+            assertTrue(f.timer.state.value.waiting)
+            assertFalse(f.timer.state.value.active)
+            assertNull(f.timer.state.value.remainingMillis)
+            assertNull(f.scheduler.current)
+            f.timer.setEnabled(true)
+            assertEquals(record.token, f.store.read().record!!.token)
+            f.timer.fire(record.token)
+            assertTrue(f.targets.isEmpty())
+        }
+        val f = Fixture(); f.playback = null
+        assertEquals(TimerStatus.WAITING, f.start().status)
+    }
+
+    @Test fun externalPlayStartsFullDurationOnceAndSubsequentStatesDoNotMoveDeadline() = runTest {
+        val f = Fixture(); f.playback = confirmed(PlaybackState.PAUSED)
+        val waiting = f.start(15)
+        f.clock.now += 600_000
+        f.playback = confirmed(PlaybackState.PLAYING)
+        f.timer.playbackChanged()
+        val started = f.store.read().record!!
+        assertNotEquals(waiting.token, started.token)
+        assertEquals(f.clock.now + 15 * 60_000L, started.deadline)
+        for (status in listOf(PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.STOPPED, PlaybackState.PLAYING)) {
+            f.clock.now += 1_000
+            f.playback = confirmed(status)
+            f.timer.playbackChanged(); f.timer.refresh()
+            assertEquals(started, f.store.read().record)
+        }
+        assertEquals(1, f.scheduler.registrations.size)
+        f.playback = confirmed(PlaybackState.STOPPED)
+        f.expire()
+        assertEquals(listOf(first), f.targets)
+    }
+
+    @Test fun durationChangesReevaluatePlaybackAndInvalidateThePreviousAlarm() = runTest {
+        val f = Fixture(); val running = f.start(30)
+        f.playback = confirmed(PlaybackState.PAUSED)
+        f.timer.setMinutes(45)
+        val waiting = f.store.read().record!!
+        assertEquals(TimerStatus.WAITING, waiting.status)
+        assertNull(waiting.deadline)
+        assertNull(f.scheduler.current)
+        f.clock.now = requireNotNull(running.deadline)
+        f.timer.fire(running.token)
+        assertTrue(f.targets.isEmpty())
+        f.timer.setMinutes(60)
+        assertNotEquals(waiting.token, f.store.read().record!!.token)
+        assertTrue(f.timer.state.value.waiting)
+        f.playback = confirmed(PlaybackState.PLAYING)
+        f.timer.playbackChanged()
+        assertEquals(f.clock.now + 60 * 60_000L, f.store.read().record!!.deadline)
+        f.clock.now += 1_000
+        f.timer.setMinutes(15)
+        assertEquals(f.clock.now + 15 * 60_000L, f.store.read().record!!.deadline)
+        val record = f.store.read().record
+        f.timer.setMinutes(15)
+        assertEquals(record, f.store.read().record)
+    }
+
+    @Test fun offWhileWaitingAndQueuedObsoleteStatusCannotStartCountdown() = runTest {
+        val f = Fixture(); f.playback = confirmed(PlaybackState.PAUSED)
+        val waiting = f.start()
+        f.lock.lock()
+        f.playback = confirmed(PlaybackState.PLAYING)
+        val event = launch { f.timer.playbackChanged() }
+        runCurrent()
+        f.playback = confirmed(PlaybackState.PAUSED)
+        f.lock.unlock(); event.join()
+        assertTrue(f.timer.state.value.waiting)
+        f.timer.setEnabled(false)
+        f.playback = confirmed(PlaybackState.PLAYING)
+        f.timer.playbackChanged(); f.timer.fire(waiting.token)
+        assertFalse(f.timer.state.value.enabled)
+        assertTrue(f.scheduler.registrations.isEmpty())
+        assertTrue(f.targets.isEmpty())
+    }
+
+    @Test fun reconnectUsesConfirmedStatusAndNeverResetsAnAlreadyStartedTimer() = runTest {
+        val f = Fixture(); f.playback = confirmed(PlaybackState.PAUSED)
+        f.start()
+        f.playback = confirmed(PlaybackState.PLAYING, connection = ConnectionStatus.FAILED)
+        f.timer.playbackChanged()
+        assertTrue(f.timer.state.value.waiting)
+        f.playback = confirmed(PlaybackState.PAUSED)
+        f.timer.playbackChanged()
+        assertTrue(f.timer.state.value.waiting)
+        f.playback = confirmed(PlaybackState.PLAYING)
+        List(3) { launch { f.timer.playbackChanged() } }.joinAll()
+        val record = f.store.read().record
+        f.playback = null
+        f.timer.refresh()
+        f.playback = confirmed(PlaybackState.PLAYING)
+        f.timer.playbackChanged()
+        assertEquals(record, f.store.read().record)
+        assertEquals(1, f.scheduler.registrations.size)
+    }
+
+    @Test fun waitingSurvivesReloadAndStartsWhenPlayIsNextObservedNotRetroactively() = runTest {
+        val f = Fixture(); f.playback = confirmed(PlaybackState.PAUSED)
+        val waiting = f.start(45)
+        f.clock.now += 600_000
+        val restored = f.controller()
+        restored.refresh()
+        assertEquals(waiting, restored.state.value.settings.record)
+        assertTrue(restored.state.value.waiting)
+        assertNull(f.scheduler.current)
+        f.playback = confirmed(PlaybackState.PLAYING)
+        f.clock.now += 600_000
+        restored.refresh()
+        assertEquals(f.clock.now + 45 * 60_000L, f.store.read().record!!.deadline)
+        assertEquals(1, f.scheduler.registrations.size)
+    }
+
+    @Test fun waitingRetainsTargetAndBootProfileSafeguards() = runTest {
+        val f = Fixture(); f.playback = confirmed(PlaybackState.PAUSED)
+        f.start()
+        f.profiles.value = f.profiles.value.copy(selectedId = second.id)
+        f.playback = confirmed(PlaybackState.PLAYING, second)
+        f.timer.setMinutes(15); f.timer.playbackChanged()
+        assertEquals(first, f.store.read().record!!.target)
+        assertTrue(f.timer.state.value.waiting)
+        f.clock.bootId = 5
+        f.timer.refresh()
+        assertEquals(TimerStatus.REBOOTED, f.store.read().record!!.status)
+        assertNull(f.scheduler.current)
+        assertTrue(f.scheduler.registrations.isEmpty())
+        val other = Fixture(); other.playback = confirmed(PlaybackState.STOPPED)
+        other.start()
+        other.profiles.value = other.profiles.value.copy(servers = listOf(second))
+        other.timer.refresh()
+        assertEquals(TimerStatus.PROFILE_CHANGED, other.store.read().record!!.status)
+    }
+
+    @Test fun repeatedForegroundRefreshAndDuplicateObserverEventsRegisterOnlyOneCountdown() = runTest {
+        val f = Fixture(); f.playback = confirmed(PlaybackState.PAUSED)
+        f.timer.observe(backgroundScope); runCurrent()
+        f.start(); runCurrent()
+        f.playback = confirmed(PlaybackState.PLAYING)
+        repeat(3) { f.timer.retry() }
+        List(3) { launch { f.timer.playbackChanged() } }.joinAll()
+        runCurrent()
+        assertTrue(f.timer.state.value.active)
+        assertEquals(1, f.scheduler.registrations.size)
     }
 
     @Test fun defaultsPresetsAndCustomValidation() = runTest {
@@ -87,7 +247,7 @@ class SleepTimerControllerTest {
         assertEquals(TimerStatus.CANCELLED, f.store.read().record!!.status)
         assertNull(f.scheduler.current)
         assertNull(f.timer.state.value.remainingMillis)
-        f.clock.now = current.deadline
+        f.clock.now = requireNotNull(current.deadline)
         f.timer.fire(current.token); f.timer.fire(old.token)
         assertTrue(f.targets.isEmpty())
     }
@@ -105,7 +265,7 @@ class SleepTimerControllerTest {
         assertEquals(old, restored.state.value.settings.record)
         assertEquals(29 * 60_000L, restored.state.value.remainingMillis)
         assertEquals(1, f.scheduler.registrations.size)
-        f.clock.now = old.deadline + 3_600_000
+        f.clock.now = requireNotNull(old.deadline) + 3_600_000
         restored.tick()
         assertEquals(0L, restored.state.value.remainingMillis)
         assertEquals(f.clock.wall - 3_600_000L, restored.state.value.estimatedEndMillis)
@@ -155,7 +315,7 @@ class SleepTimerControllerTest {
             val f = Fixture(); val record = f.start()
             f.profiles.value = f.profiles.value.copy(servers = listOfNotNull(second, replacement))
             // Even before the profile observer runs, dispatch revalidates the endpoint.
-            f.clock.now = record.deadline
+            f.clock.now = requireNotNull(record.deadline)
             f.timer.fire(record.token)
             assertEquals(TimerStatus.PROFILE_CHANGED, f.store.read().record!!.status)
             assertNull(f.scheduler.current)
@@ -192,7 +352,7 @@ class SleepTimerControllerTest {
         assertTrue(f.targets.isEmpty())
         f.timer.setMinutes(15)
         val current = f.store.read().record!!
-        f.clock.now = current.deadline
+        f.clock.now = requireNotNull(current.deadline)
         f.timer.fire(old.token)
         val jobs = List(3) { launch { f.timer.fire(current.token) } }
         jobs.joinAll()
@@ -201,7 +361,7 @@ class SleepTimerControllerTest {
 
     @Test fun cancellationAndRestartAtDeadlineInvalidateQueuedOldEvent() = runTest {
         val f = Fixture(); val old = f.start()
-        f.clock.now = old.deadline
+        f.clock.now = requireNotNull(old.deadline)
         f.lock.lock()
         val cancel = launch { f.timer.setEnabled(false) }
         val restart = launch { f.timer.setEnabled(true) }
@@ -214,7 +374,7 @@ class SleepTimerControllerTest {
 
     @Test fun alreadyClaimedDeliverySerializesCancelAndProfileChangesUntilCompletion() = runTest {
         val f = Fixture(); val record = f.start()
-        f.clock.now = record.deadline
+        f.clock.now = requireNotNull(record.deadline)
         val gate = CompletableDeferred<Unit>()
         f.deliver = { gate.await(); null }
         val delivery = launch { f.timer.fire(record.token) }
@@ -231,7 +391,7 @@ class SleepTimerControllerTest {
 
     @Test fun interruptedClaimNeverReplaysAfterProcessRestart() = runTest {
         val f = Fixture(); val record = f.start()
-        f.clock.now = record.deadline
+        f.clock.now = requireNotNull(record.deadline)
         f.deliver = { awaitCancellation() }
         val delivery = launch { f.timer.fire(record.token) }
         runCurrent(); delivery.cancelAndJoin()

@@ -187,6 +187,7 @@ class ServersViewModel(
     fun select(server: ServerProfile) = writeSettings { store.select(server.id) }
     fun delete(server: ServerProfile) = writeSettings { store.delete(server.id) }
     fun reorder(ids: List<String>) = writeSettings(invalidate = false) { store.reorder(ids) }
+    fun setTrackInfoExpanded(expanded: Boolean) = writeSettings(invalidate = false) { store.setTrackInfoExpanded(expanded) }
     fun setTheme(mode: ThemeMode) = writeSettings(invalidate = false) { store.setTheme(mode) }
 
     private fun writeSettings(

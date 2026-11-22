@@ -412,7 +412,18 @@ class MpdRepository(
             PlayerAction.Next -> client.execute("next")
             PlayerAction.Clear -> client.execute("clear")
             is PlayerAction.Random -> client.execute("random", if (action.enabled) "1" else "0")
-            is PlayerAction.Repeat -> client.execute("repeat", if (action.enabled) "1" else "0")
+            is PlayerAction.Repeat -> {
+                // Fresh status avoids relying on an idle snapshot that may already be stale.
+                // The caller holds operations across this entire sequence and its readback.
+                val status = MpdData.status(client.execute("status"))
+                val repeat = action.mode != RepeatMode.NONE
+                val single = if (action.mode == RepeatMode.SINGLE) SingleMode.ON else SingleMode.OFF
+                if (!authorized()) return
+                if (status.repeat != repeat) client.execute("repeat", if (repeat) "1" else "0")
+                currentCoroutineContext().ensureActive()
+                if (!authorized()) return
+                if (status.single != single) client.execute("single", if (single == SingleMode.ON) "1" else "0")
+            }
             is PlayerAction.Volume -> {
                 if (action.value in 0..100 && state.value.snapshot?.status?.volume != null) {
                     client.execute("setvol", action.value.toString())
