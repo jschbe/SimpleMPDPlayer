@@ -220,7 +220,14 @@ class ServersViewModel(
 
     fun reconnect() {
         invalidateNotices()
-        connect(mutableState.value.activeServer)
+        if (repository.activeServer == mutableState.value.activeServer && networkPermission()) repository.reconnect()
+        else connect(mutableState.value.activeServer)
+    }
+
+    fun onForeground() {
+        refreshNetworkPermission()
+        refreshSleepTimer()
+        repository.checkConnection()
     }
 
     fun setSleepEnabled(enabled: Boolean) { viewModelScope.launch { sleepTimer?.setEnabled(enabled) } }

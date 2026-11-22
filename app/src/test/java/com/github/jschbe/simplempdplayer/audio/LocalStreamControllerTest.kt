@@ -108,6 +108,26 @@ class LocalStreamControllerTest {
         assertEquals(0, backend.stops)
     }
 
+    @Test fun temporaryControlRecoveryKeepsManualReceiverAndTerminalFailureReleasesIt() {
+        val backend = Backend()
+        val controller = LocalStreamController(backend)
+        controller.enable(first, connected)
+        val generation = controller.request.value!!.generation
+        controller.connectionChanged(first, connected.copy(status = ConnectionStatus.FAILED, recovering = true))
+        controller.connectionChanged(first, connected.copy(status = ConnectionStatus.CONNECTING, recovering = true))
+        assertEquals(generation, controller.request.value!!.generation)
+        assertEquals(1, backend.starts.size)
+        assertEquals(0, backend.stops)
+        controller.connectionChanged(first, connected.copy(error = ConnectionError.LOST,
+            failureSource = ConnectionFailureSource.IDLE, retriesExhausted = true))
+        assertEquals(generation, controller.request.value!!.generation)
+        controller.connectionChanged(first, connected.copy(status = ConnectionStatus.FAILED, retriesExhausted = true))
+        assertNull(controller.request.value)
+        assertEquals(1, backend.stops)
+        controller.connectionChanged(first, connected)
+        assertNull(controller.request.value)
+    }
+
     @Test fun androidStartDenialIsRecoverableAndNeverRetriedAutomatically() {
         val backend = Backend().apply { failure = IllegalStateException("Internal detail") }
         val controller = LocalStreamController(backend)

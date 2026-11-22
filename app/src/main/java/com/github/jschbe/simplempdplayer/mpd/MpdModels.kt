@@ -43,6 +43,8 @@ data class MpdSnapshot(
 
 sealed interface PlayerAction {
     data object PlayPause : PlayerAction
+    data object Play : PlayerAction
+    data object Pause : PlayerAction
     data object Stop : PlayerAction
     data object Previous : PlayerAction
     data object Next : PlayerAction

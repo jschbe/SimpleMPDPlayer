@@ -35,7 +35,9 @@ class PlayerApplication : Application() {
                 } else MpdRepository.pauseForTimer(it, ::resolveTimerHost)
             })
     }
-    val repository by lazy { MpdRepository(playbackScope) }
+    val repository by lazy {
+        MpdRepository(playbackScope).also { com.github.jschbe.simplempdplayer.mpd.MpdNetworkObserver(this, it::networkChanged).start() }
+    }
     val streamBackend by lazy { AndroidStreamBackend(this) }
     val localStream by lazy {
         LocalStreamController(streamBackend).also { stream ->

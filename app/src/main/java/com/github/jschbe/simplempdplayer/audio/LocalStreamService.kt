@@ -4,9 +4,10 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyEvent
+import androidx.core.content.IntentCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -25,6 +26,7 @@ import com.github.jschbe.simplempdplayer.MainActivity
 import com.github.jschbe.simplempdplayer.PlayerApplication
 import com.github.jschbe.simplempdplayer.R
 import com.github.jschbe.simplempdplayer.mpd.PlaybackState
+import com.github.jschbe.simplempdplayer.mpd.PlayerAction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,8 +34,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.combine
 
-/** One manually authorized HTTP receiver. No MPD transport API is reachable from this service. */
+/** One manually authorized HTTP receiver with generation-bound MPD system transport. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class LocalStreamService : MediaSessionService() {
     private val owner get() = application as PlayerApplication
@@ -41,11 +44,11 @@ class LocalStreamService : MediaSessionService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
+    private var sessionPlayer: MpdSessionPlayer? = null
     private var token = -1L
     private var remotePlaying = false
     private var watchdog: Job? = null
     private var observer: Job? = null
-    private var metadata: MediaMetadata? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -125,19 +128,30 @@ class LocalStreamService : MediaSessionService() {
             }
         })
         val activity = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        session = MediaSession.Builder(this, UnpositionedStreamPlayer(exo))
+        val transport = MpdMediaTransport(owner.repository, stream, request)
+        val facade = MpdSessionPlayer(transport)
+        sessionPlayer = facade
+        updateMetadata(request)
+        session = MediaSession.Builder(this, facade)
             .setSessionActivity(activity)
             .setCallback(object : MediaSession.Callback {
+                override fun onMediaButtonEvent(session: MediaSession, controllerInfo: MediaSession.ControllerInfo, intent: Intent): Boolean {
+                    val key = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java) ?: return false
+                    if (key.keyCode != KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE && key.keyCode != KeyEvent.KEYCODE_HEADSETHOOK) return false
+                    // Preserve toggle intent until the repository reads fresh MPD status. Other
+                    // standard media commands still use the player facade, never ExoPlayer.
+                    if (key.action == KeyEvent.ACTION_DOWN && key.repeatCount == 0 && transport.available) {
+                        transport.submit(PlayerAction.PlayPause)
+                    }
+                    return true
+                }
+
                 override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
-                    // Notification/platform controllers are included: no play, pause, seek, queue,
-                    // URI replacement or custom commands. MPD controls stay in the app.
+                    // Standard player commands reach the MPD facade, including platform/media keys.
+                    // Never allow seeking, Stop, decoder/item control, queues or custom commands.
                     return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
                         .setAvailableSessionCommands(SessionCommands.EMPTY)
-                        .setAvailablePlayerCommands(Player.Commands.Builder()
-                            .add(Player.COMMAND_GET_CURRENT_MEDIA_ITEM)
-                            .add(Player.COMMAND_GET_METADATA)
-                            .add(Player.COMMAND_GET_TIMELINE)
-                            .build())
+                        .setAvailablePlayerCommands(MpdSessionPlayer.commands(true))
                         .build()
                 }
             }).build()
@@ -149,7 +163,7 @@ class LocalStreamService : MediaSessionService() {
         exo.playWhenReady = remotePlaying
         exo.prepare()
         observer = scope.launch {
-            stream.request.collect { current ->
+            combine(stream.request, owner.repository.state) { current, _ -> current }.collect { current ->
                 if (current?.generation == token) {
                     updateMetadata(current)
                     val playing = current.snapshot.status.playback == PlaybackState.PLAYING
@@ -182,12 +196,7 @@ class LocalStreamService : MediaSessionService() {
             .setAlbumTitle(song?.albums.orEmpty().joinToString(getString(R.string.metadata_separator)))
             .setSubtitle(getString(R.string.stream_notification_status, status))
             .setIsBrowsable(false).setIsPlayable(true).build()
-        if (updated != metadata) {
-            metadata = updated
-            player?.let { exo ->
-                exo.currentMediaItem?.let { exo.replaceMediaItem(0, it.buildUpon().setMediaMetadata(updated).build()) }
-            }
-        }
+        sessionPlayer?.update(request, updated)
     }
 
     private fun publishState() {
@@ -228,7 +237,7 @@ class LocalStreamService : MediaSessionService() {
         watchdog?.cancel(); watchdog = null
         session?.let { removeSession(it); it.release() }; session = null
         player?.release(); player = null
-        metadata = null
+        sessionPlayer?.release(); sessionPlayer = null
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
@@ -248,15 +257,4 @@ class LocalStreamService : MediaSessionService() {
     }
 
     companion object { const val GENERATION = "stream_generation" }
-}
-
-/** The HTTP connection has no independent track position, duration or seek target. */
-@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-private class UnpositionedStreamPlayer(player: Player) : ForwardingPlayer(player) {
-    override fun getDuration() = C.TIME_UNSET
-    override fun getCurrentPosition() = 0L
-    override fun getBufferedPosition() = 0L
-    override fun getContentPosition() = 0L
-    override fun getContentBufferedPosition() = 0L
-    override fun getContentDuration() = C.TIME_UNSET
 }

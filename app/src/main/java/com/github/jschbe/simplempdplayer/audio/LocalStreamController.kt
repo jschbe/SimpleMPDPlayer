@@ -63,7 +63,8 @@ class LocalStreamController(private val backend: StreamBackend) {
 
     fun connectionChanged(server: ServerProfile?, connection: ConnectionState) {
         val current = request.value ?: return
-        if (server != current.server || connection.status != ConnectionStatus.CONNECTED || connection.snapshot == null) {
+        if (server != current.server || connection.snapshot == null ||
+            (connection.status != ConnectionStatus.CONNECTED && !connection.recovering)) {
             fail(current.generation, StreamError.CONNECTION_LOST)
         } else {
             mutableRequest.value = current.copy(snapshot = connection.snapshot)

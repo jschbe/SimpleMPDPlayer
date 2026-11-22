@@ -64,7 +64,7 @@ fun ServersApp(
         }
     }
     BackHandler(enabled = showServers) { showServers = false }
-    val connected = state.connection.status == ConnectionStatus.CONNECTED
+    val connected = state.connection.status == ConnectionStatus.CONNECTED && !state.connection.waitingForNetwork
     val controlsEnabled = connected && !state.connection.commandPending
     LaunchedEffect(showServers, pager.settledPage, state.connection.status, state.browser.generation) {
         if (!showServers && pager.settledPage == 0 && connected) onLoadBrowser()
@@ -125,12 +125,24 @@ fun ServersApp(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(stringResource(state.connection.status.label()), style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                if (state.loading || state.connection.status == ConnectionStatus.CONNECTING) {
+                val connection = state.connection
+                val label = when {
+                    connection.waitingForNetwork -> stringResource(R.string.connection_waiting_network)
+                    connection.recovering -> stringResource(R.string.connection_recovering, connection.retryAttempt)
+                    else -> stringResource(connection.status.label())
+                }
+                Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                if (state.loading || connection.status == ConnectionStatus.CONNECTING || connection.recovering) {
                     CircularProgressIndicator(Modifier.size(20.dp))
-                } else if (!connected && state.activeServer != null) {
+                } else if ((!connected || connection.error != null || connection.retriesExhausted) && state.activeServer != null) {
                     TextButton(onClick = onReconnect) { Text(stringResource(R.string.reconnect)) }
                 }
+            }
+            if (state.connection.retriesExhausted) {
+                Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { ErrorText(R.string.connection_retries_exhausted) }
+            }
+            state.connection.failureSource?.takeIf { state.connection.error != null }?.let {
+                Text(stringResource(it.label()), modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
             }
             (state.connection.error ?: state.connection.commandError)?.let {
                 Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { ErrorText(it.label()) }
@@ -140,7 +152,8 @@ fun ServersApp(
                     Text(stringResource(R.string.allow_local_network))
                 }
             }
-            if (!connected && state.connection.snapshot != null) {
+            if ((!connected || (state.connection.failureSource == com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.IDLE &&
+                    !state.connection.idleConnected)) && state.connection.snapshot != null) {
                 Text(stringResource(R.string.stale_data), modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
             }
             if (!showServers && state.saveFailed) ErrorText(R.string.settings_save_failed)

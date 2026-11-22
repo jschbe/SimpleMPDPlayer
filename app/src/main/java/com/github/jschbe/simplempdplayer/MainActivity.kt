@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
             val networkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
                 model.refreshNetworkPermission()
             }
-            LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.refreshNetworkPermission(); model.refreshSleepTimer() }
+            LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.onForeground() }
             SimpleMPDPlayerTheme(mode = state.settings.theme) {
                 ServersApp(
                     state = state,

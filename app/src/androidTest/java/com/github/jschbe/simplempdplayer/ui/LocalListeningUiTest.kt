@@ -54,6 +54,21 @@ class LocalListeningUiTest {
         compose.runOnIdle { assertEquals(listOf(true, false, true), listening); assertTrue(commands.isEmpty()) }
     }
 
+    @Test fun exhaustedIdleRecoveryShowsClearErrorAndRetainsManualReconnect() {
+        state.value = state.value.copy(connection = ConnectionState(ConnectionStatus.CONNECTED,
+            error = ConnectionError.LOST, failureSource = ConnectionFailureSource.IDLE,
+            retryAttempt = 5, retriesExhausted = true))
+        show()
+        compose.onNodeWithText("Automatic recovery stopped after 5 retries. Tap Reconnect to try again.").assertIsDisplayed()
+        compose.onNodeWithText("Reconnect").assertIsEnabled()
+        compose.onNodeWithText("Live MPD updates interrupted; the control connection is retained").assertIsDisplayed()
+        compose.runOnIdle {
+            state.value = state.value.copy(connection = state.value.connection.copy(recovering = true,
+                retriesExhausted = false, waitingForNetwork = true))
+        }
+        compose.onNodeWithText("Network unavailable").assertIsDisplayed()
+    }
+
     @Test fun disconnectedCannotEnableAudioButAnActiveReceiverCanAlwaysBeTurnedOff() {
         state.value = state.value.copy(connection = ConnectionState())
         show()

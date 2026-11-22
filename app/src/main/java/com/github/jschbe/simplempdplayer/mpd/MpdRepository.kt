@@ -11,11 +11,13 @@ import java.net.UnknownHostException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -24,6 +26,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 enum class ConnectionStatus { DISCONNECTED, CONNECTING, CONNECTED, FAILED }
+enum class ConnectionFailureSource { CONNECT, CONTROL, IDLE }
 enum class ConnectionError { REFUSED, UNREACHABLE, TIMEOUT, INVALID_RESPONSE, LOST, MPD_REJECTED, NETWORK, PERMISSION_REQUIRED }
 
 data class ConnectionState(
@@ -32,6 +35,12 @@ data class ConnectionState(
     val snapshot: MpdSnapshot? = null,
     val commandPending: Boolean = false,
     val commandError: ConnectionError? = null,
+    val failureSource: ConnectionFailureSource? = null,
+    val recovering: Boolean = false,
+    val retryAttempt: Int = 0,
+    val retriesExhausted: Boolean = false,
+    val waitingForNetwork: Boolean = false,
+    val idleConnected: Boolean = false,
 )
 
 /** Main-scope owner of two technical connections to exactly one active server. */
@@ -41,14 +50,17 @@ class MpdRepository(
     private val pingIntervalMillis: Long = 15_000,
     private val nanoTime: () -> Long = System::nanoTime,
 ) {
-    private class Session(val command: MpdConnection, val events: MpdConnection, val work: Job) {
+    private class Session(val command: MpdConnection, var events: MpdConnection?, val work: Job) {
         val operations = Mutex()
         var browserRequest = 0L
         var closed = false
+        var listener: Job? = null
+        var heartbeat: Job? = null
+        var healthCheck: Job? = null
         fun close() {
             closed = true
             command.close()
-            events.close()
+            events?.close()
             work.cancel()
         }
     }
@@ -60,7 +72,10 @@ class MpdRepository(
     var activeServer: ServerProfile? = null
         private set
     private var session: Session? = null
-    private var job: Job? = null
+    private var recoveryJob: Job? = null
+    private var generation = 0L
+    private var retryAttempt = 0
+    private val networkAvailable = MutableStateFlow(true)
 
     /** Probe only greeting/ping; never replace the active command/event session. */
     suspend fun testConnection(server: ServerProfile): ConnectionError? {
@@ -86,50 +101,177 @@ class MpdRepository(
             mutableState.value = ConnectionState(ConnectionStatus.FAILED, ConnectionError.PERMISSION_REQUIRED)
             return
         }
-        val current = Session(connectionFactory(), connectionFactory(), Job(scope.coroutineContext[Job]))
-        session = current
-        mutableState.value = ConnectionState(ConnectionStatus.CONNECTING)
-        job = scope.launch {
-            try {
-                coroutineScope {
-                    current.command.connect(server.host, server.mpdPort)
-                    current.command.ping()
-                    current.events.connect(server.host, server.mpdPort)
-                    current.operations.withLock { refresh(current) }
-                    launch {
-                        while (isActive) {
-                            val changes = current.events.idle()
-                            if (changes.isEmpty()) throw InvalidMpdResponse()
-                            current.operations.withLock { refresh(current) }
-                        }
-                    }
-                    while (isActive) {
-                        delay(pingIntervalMillis)
-                        current.operations.withLock { current.command.ping() }
-                    }
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: IOException) {
-                fail(current, classify(error))
-            } catch (_: SecurityException) {
-                fail(current, ConnectionError.PERMISSION_REQUIRED)
-            } finally {
-                current.close()
-            }
+        if (!networkAvailable.value) {
+            mutableState.value = ConnectionState(ConnectionStatus.FAILED, recovering = true, waitingForNetwork = true)
+            scheduleRecovery()
+        } else {
+            startConnection()
         }
     }
 
-    fun perform(action: PlayerAction) {
+    private fun startConnection() {
+        val token = generation
+        val work = scope.launch(start = CoroutineStart.LAZY) { openControl(token) }
+        recoveryJob = work
+        work.invokeOnCompletion { if (generation == token && recoveryJob === work) {
+            recoveryJob = null
+            if (state.value.recovering) scheduleRecovery()
+        } }
+        work.start()
+    }
+
+    /** Manual retry resets the budget without revoking same-server local listening. */
+    fun reconnect() {
+        if (activeServer == null) return
+        cancelConnections()
+        mutableBrowser.value = BrowserState(generation = browser.value.generation + 1)
+        mutableState.update { it.copy(status = ConnectionStatus.CONNECTING, error = null, commandPending = false,
+            commandError = null, recovering = true, retryAttempt = 0, retriesExhausted = false,
+            waitingForNetwork = !networkAvailable.value, idleConnected = false) }
+        if (networkAvailable.value) startConnection() else scheduleRecovery()
+    }
+
+    private suspend fun openControl(token: Long) {
+        val server = activeServer ?: return
+        if (token != generation) return
+        val current = Session(connectionFactory(), connectionFactory(), SupervisorJob(scope.coroutineContext[Job]))
+        session = current
+        mutableState.update { it.copy(status = ConnectionStatus.CONNECTING, commandPending = false) }
+        try {
+            current.command.connect(server.host, server.mpdPort)
+            current.command.ping()
+            current.operations.withLock { refresh(current, forceQueue = true) }
+            if (!isCurrent(current)) return
+            current.heartbeat = scope.launch(current.work) {
+                try {
+                    while (isActive) {
+                        delay(pingIntervalMillis)
+                        if (networkAvailable.value) current.operations.withLock { current.command.ping() }
+                    }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: IOException) { fail(current, classify(error)) }
+                catch (_: SecurityException) { fail(current, ConnectionError.PERMISSION_REQUIRED) }
+            }
+            openIdle(current)
+        } catch (cancelled: CancellationException) {
+            current.close()
+            throw cancelled
+        } catch (error: IOException) {
+            fail(current, classify(error), ConnectionFailureSource.CONNECT)
+        } catch (_: SecurityException) {
+            fail(current, ConnectionError.PERMISSION_REQUIRED, ConnectionFailureSource.CONNECT)
+        }
+    }
+
+    private suspend fun openIdle(current: Session) {
+        if (!isCurrent(current)) return
+        val server = activeServer ?: return
+        val events = current.events ?: connectionFactory().also { current.events = it }
+        try {
+            events.connect(server.host, server.mpdPort)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: IOException) { idleFailed(current, events, classify(error)); return }
+        catch (_: SecurityException) { idleFailed(current, events, ConnectionError.PERMISSION_REQUIRED); return }
+        if (!isCurrent(current) || current.events !== events) return
+        // Subscribe before readback so changes around recovery cannot fall into an idle gap.
+        current.listener = scope.launch(current.work) {
+            while (isActive && isCurrent(current) && current.events === events) {
+                val changes = try {
+                    events.idle().also { if (it.isEmpty()) throw InvalidMpdResponse() }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: IOException) { idleFailed(current, events, classify(error)); return@launch }
+                catch (_: SecurityException) { idleFailed(current, events, ConnectionError.PERMISSION_REQUIRED); return@launch }
+                if (changes.isNotEmpty()) try {
+                    current.operations.withLock { refresh(current) }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: IOException) { fail(current, classify(error)); return@launch }
+                catch (_: SecurityException) { fail(current, ConnectionError.PERMISSION_REQUIRED); return@launch }
+            }
+        }
+        try {
+            current.operations.withLock { refresh(current, forceQueue = true) }
+            if (!isCurrent(current) || current.events !== events) return
+            retryAttempt = 0
+            mutableState.update { it.copy(error = null, recovering = false, retryAttempt = 0,
+                retriesExhausted = false, waitingForNetwork = !networkAvailable.value, idleConnected = true) }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: IOException) { fail(current, classify(error)) }
+        catch (_: SecurityException) { fail(current, ConnectionError.PERMISSION_REQUIRED) }
+    }
+
+    private fun idleFailed(current: Session, events: MpdConnection, error: ConnectionError) {
+        if (!isCurrent(current) || current.events !== events) return
+        events.close()
+        current.events = null
+        mutableState.update { it.copy(error = error, failureSource = ConnectionFailureSource.IDLE,
+            idleConnected = false, recovering = retryable(error), waitingForNetwork = !networkAvailable.value) }
+        scheduleRecovery()
+    }
+
+    private fun retryable(error: ConnectionError) = error in setOf(ConnectionError.REFUSED,
+        ConnectionError.UNREACHABLE, ConnectionError.TIMEOUT, ConnectionError.LOST, ConnectionError.NETWORK)
+
+    /** One bounded repair loop for both full reconnects and isolated event-socket repairs. */
+    private fun scheduleRecovery() {
+        if (recoveryJob?.isActive == true || !state.value.recovering || activeServer == null) return
+        val token = generation
+        recoveryJob = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                while (token == generation && state.value.recovering && retryAttempt < 5) {
+                    networkAvailable.first { it }
+                    delay(1_000L shl retryAttempt)
+                    if (!networkAvailable.value) continue
+                    retryAttempt++
+                    mutableState.update { it.copy(retryAttempt = retryAttempt, waitingForNetwork = false) }
+                    val current = session
+                    if (current != null && isCurrent(current)) openIdle(current) else openControl(token)
+                }
+                if (token == generation && state.value.recovering && retryAttempt == 5) {
+                    mutableState.update { it.copy(recovering = false, retriesExhausted = true, waitingForNetwork = !networkAvailable.value) }
+                }
+            } finally {
+                if (token == generation) recoveryJob = null
+            }
+        }.also { it.start() }
+    }
+
+    /** Connectivity callbacks are hints; LAN-only networks do not need Internet validation. */
+    fun networkChanged(available: Boolean) {
+        val changed = networkAvailable.value != available
+        networkAvailable.value = available
+        mutableState.update { it.copy(waitingForNetwork = activeServer != null && !available) }
+        if (changed && available) checkConnection()
+    }
+
+    /** One foreground/network-return health check, serialized with commands and other checks. */
+    fun checkConnection() {
         val current = session ?: return
-        if (state.value.status != ConnectionStatus.CONNECTED || state.value.commandPending) return
-        mutableState.update { it.copy(commandPending = true, commandError = null) }
-        scope.launch(current.work) {
+        if (!isCurrent(current) || state.value.status != ConnectionStatus.CONNECTED ||
+            !networkAvailable.value || current.healthCheck?.isActive == true) return
+        current.healthCheck = scope.launch(current.work) {
             try {
                 current.operations.withLock {
                     if (!isCurrent(current)) return@withLock
+                    current.command.ping()
+                    refresh(current, forceQueue = true)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: IOException) { fail(current, classify(error)) }
+            catch (_: SecurityException) { fail(current, ConnectionError.PERMISSION_REQUIRED) }
+        }
+    }
+
+    /** The optional authorization is rechecked after waiting for IO/locks, before mutation. */
+    fun perform(action: PlayerAction, authorized: () -> Boolean = { true }): Job? {
+        val current = session ?: return null
+        if (state.value.status != ConnectionStatus.CONNECTED || state.value.commandPending || !networkAvailable.value || !authorized()) return null
+        mutableState.update { it.copy(commandPending = true, commandError = null) }
+        return scope.launch(current.work) {
+            try {
+                current.operations.withLock {
+                    if (!isCurrent(current) || !authorized()) return@withLock
                     try {
-                        executeAction(current.command, action)
+                        executeAction(current.command, action) { isCurrent(current) && authorized() }
                     } catch (_: MpdAckException) {
                         if (session === current) mutableState.update { it.copy(commandError = ConnectionError.MPD_REJECTED) }
                     }
@@ -252,13 +394,16 @@ class MpdRepository(
 
     private fun isCurrent(current: Session) = session === current && !current.closed
 
-    private suspend fun executeAction(client: MpdConnection, action: PlayerAction) {
+    private suspend fun executeAction(client: MpdConnection, action: PlayerAction, authorized: () -> Boolean) {
         when (action) {
-            PlayerAction.PlayPause -> {
-                when (MpdData.status(client.execute("status")).playback) {
-                    PlaybackState.PLAYING -> client.execute("pause", "1")
-                    PlaybackState.PAUSED -> client.execute("pause", "0")
-                    PlaybackState.STOPPED -> client.execute("play")
+            PlayerAction.PlayPause, PlayerAction.Play, PlayerAction.Pause -> {
+                val playback = MpdData.status(client.execute("status")).playback
+                // A disabled receiver or switched session must not mutate after a delayed read.
+                if (!authorized()) return
+                when (playback) {
+                    PlaybackState.PLAYING -> if (action != PlayerAction.Play) client.execute("pause", "1")
+                    PlaybackState.PAUSED -> if (action != PlayerAction.Pause) client.execute("pause", "0")
+                    PlaybackState.STOPPED -> if (action != PlayerAction.Pause) client.execute("play")
                     PlaybackState.UNKNOWN -> throw InvalidMpdResponse()
                 }
             }
@@ -296,13 +441,13 @@ class MpdRepository(
     }
 
     /** All callers hold this session's operations lock, so command + refresh cannot interleave. */
-    private suspend fun refresh(current: Session) {
+    private suspend fun refresh(current: Session, forceQueue: Boolean = false) {
         if (!isCurrent(current)) return
         repeat(3) {
             val before = MpdData.status(current.command.execute("status"))
             val song = MpdData.currentSong(current.command.execute("currentsong"))
             val old = state.value.snapshot
-            val queue = if (old == null || before.queueVersion == null || before.queueVersion != old.status.queueVersion) {
+            val queue = if (forceQueue || old == null || before.queueVersion == null || before.queueVersion != old.status.queueVersion) {
                 MpdData.queue(current.command.execute("playlistinfo"))
             } else old.queue
             val after = MpdData.status(current.command.execute("status"))
@@ -311,7 +456,9 @@ class MpdRepository(
                 song?.id == after.songId && (after.queueLength == null || after.queueLength == queue.size)
             ) {
                 val snapshot = MpdSnapshot(after, song, queue, nanoTime())
-                mutableState.update { it.copy(status = ConnectionStatus.CONNECTED, error = null, snapshot = snapshot) }
+                mutableState.update { it.copy(status = ConnectionStatus.CONNECTED,
+                    error = if (it.failureSource == ConnectionFailureSource.IDLE && !it.idleConnected) it.error else null,
+                    snapshot = snapshot) }
                 return
             }
         }
@@ -319,21 +466,29 @@ class MpdRepository(
         throw InvalidMpdResponse()
     }
 
-    private fun fail(current: Session, error: ConnectionError) {
+    private fun fail(current: Session, error: ConnectionError, source: ConnectionFailureSource = ConnectionFailureSource.CONTROL) {
         if (!isCurrent(current)) return
-        mutableState.update { it.copy(status = ConnectionStatus.FAILED, error = error, commandPending = false) }
-        mutableBrowser.update { it.copy(entries = emptyList(), loaded = false, loading = false, error = null) }
-        job?.cancel()
         current.close()
+        mutableState.update { it.copy(status = ConnectionStatus.FAILED, error = error, commandPending = false,
+            failureSource = source, idleConnected = false, recovering = retryable(error),
+            waitingForNetwork = !networkAvailable.value) }
+        mutableBrowser.update { it.copy(generation = it.generation + 1, entries = emptyList(), loaded = false, loading = false, error = null) }
+        scheduleRecovery()
     }
 
-    fun close() {
-        activeServer = null
+    private fun cancelConnections() {
+        ++generation
+        recoveryJob?.cancel()
+        recoveryJob = null
+        retryAttempt = 0
         val previous = session
         session = null
         previous?.close()
-        job?.cancel()
-        job = null
+    }
+
+    fun close() {
+        cancelConnections()
+        activeServer = null
         mutableState.value = ConnectionState()
         mutableBrowser.value = BrowserState(generation = browser.value.generation + 1)
     }

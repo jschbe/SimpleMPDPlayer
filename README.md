@@ -2,9 +2,9 @@
 
 A minimal Android client for Music Player Daemon (MPD), for Android 12 and newer.
 
-## Current milestone: M5
+## Current milestone: M6
 
-- Saved server profiles, header dropdown, persistent ordering, connection status and manual reconnect.
+- Saved server profiles, header dropdown, persistent ordering, connection status, bounded automatic recovery and manual reconnect.
 - First-run setup, independent MPD connection test, and Save that activates/connects the profile.
 - Handle-based server drag-and-drop, deletion confirmation and persistent System/Light/Dark appearance.
 - Prepared launcher artwork integrated as adaptive, legacy and themed icons.
@@ -14,11 +14,11 @@ A minimal Android client for Music Player Daemon (MPD), for Android 12 and newer
 - Current title/artist/album, playback state, progress/seek, previous/next, stop, Random/Repeat and supported MPD volume.
 - MPD queue with current-song highlighting, play/remove/clear and move up/down actions.
 - External changes through a separate MPD idle connection to the same active server.
-- Optional **Listen on phone** HTTP audio, Media3 background playback and a read-only media session showing MPD metadata.
+- Optional **Listen on phone** HTTP audio, Media3 background playback and MPD-backed system media controls with title/artist and playback state.
 - One persistent **Sleep timer**, independent of local listening, with 15/30/45/60-minute presets and custom 1–1440 minutes.
 - English Material 3 UI; Servers management lives in the Settings overflow menu.
 
-M5 has no search, stored-playlist support, password authentication, cover art, downloads, offline playback, accounts, cloud services or analytics. Transport controls operate MPD; local audio is a separate optional receiver.
+M6 has no search, stored-playlist support, password authentication, cover art, downloads, offline playback, accounts, cloud services or analytics. Transport controls operate MPD; local audio is a separate optional receiver.
 
 ## Build and test
 
@@ -46,9 +46,9 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 5. Change the queue/options or playback from another MPD client; verify updates arrive. Check seek dragging, scrolling, Activity recreation, manual reconnect and server switching. Switching clears the old snapshot and closes both old sockets.
 6. In Browser, tap a folder to open it; use Up or Android Back to return to its parent. Tap a file for **Append to queue** / **Replace queue**, or open a folder's trailing menu for the same choices. MPD performs folder recursion. Confirm replacement only when you intend to discard the current queue. Test Unicode, spaces, quotes/backslashes, empty or inaccessible folders, and switching servers while loading. Stored playlists are skipped with a notice.
 
-7. In Player, enable **Listen on phone** to receive `http://<profile host>:<stream port>/`. It starts off after process startup, reconnect, Save or server switch. Rotation/recreation and returning to the app preserve a deliberately enabled receiver. Turn it off to close local audio without sending any MPD command. Use the phone/Bluetooth volume buttons for local sound; **MPD volume** changes the server mixer.
+7. In Player, enable **Listen on phone** to receive `http://<profile host>:<stream port>/`. It starts off after process startup, Save or server switch. Same-server control recovery and manual Reconnect preserve an already enabled receiver where possible. Rotation/recreation and returning to the app preserve a deliberately enabled receiver. Turn it off to close local audio without sending any MPD command. Use the phone/Bluetooth volume buttons for local sound; **MPD volume** changes the server mixer.
 8. Check Connecting, Buffering, Receiving, Waiting for MPD and failure/retry feedback. HTTP bytes can contain silence while MPD is paused: readiness does not prove audible music. Local output follows confirmed MPD play/pause/stop. On MPD resume, it rejoins the live HTTP origin to discard old buffered silence. Audio can lag behind the displayed MPD title/position.
-9. While listening to a playing server, switch apps or turn the screen off. The media notification/lock screen shows MPD metadata and opens the app. System transport/seek controls are deliberately unavailable; use the app to control MPD and to enable/disable local listening. Focus loss or unplugging headphones affects local audio only. Permanent focus loss/noisy events turn reception off; transient focus loss can suppress and resume local sound through ExoPlayer. Bluetooth routing uses Android defaults. After a long pause Android may reclaim the service; open the app and enable listening again if needed.
+9. While listening to a playing server, switch apps or turn the screen off. The media notification/lock screen shows MPD metadata and opens the app. System Play/Pause, Previous and Next control MPD through the same repository as the app; Bluetooth/headset media keys use that session too. Seeking, Stop, queue editing and artwork are unavailable in system controls. The confirmed MPD state is displayed even while the HTTP decoder buffers or receives silence. Use the app to enable/disable local listening. Focus loss or unplugging headphones affects local audio only. Permanent focus loss/noisy events turn reception off; transient focus loss can suppress and resume local sound through ExoPlayer. Bluetooth routing uses Android defaults. After a long pause Android may reclaim the service; open the app and enable listening again if needed.
 
 10. Open Settings → **Sleep timer**. Default duration is 30 minutes; presets and **Custom minutes** / **Apply duration** save the last choice. Switch On to start now for the selected server, even without a current MPD connection or **Listen on phone**. The dialog shows the bound server, rounded-up remaining hours/minutes and estimated due time; Player shows a small countdown. Switch Off to cancel. Changing duration restarts the active timer from now on its original server.
 11. Selecting another server does not move the timer. Deleting the bound profile or changing its host, MPD port or HTTP stream port cancels it; renaming and sorting do not. At expiry an independent short connection sends only `pause 1`, never Stop/Play or queue commands. MPD acknowledgement is required for success. Failure is saved and shown under Sleep timer with a Player attention hint; no automatic retry runs.
@@ -60,9 +60,21 @@ Plain MPD TCP can be unencrypted. The app never opens router ports or configures
 
 The original icon image is unchanged. Its baked rounded background was replaced with a full-bleed gradient so Android applies only one launcher mask; foreground separation is approximate. API 33+ themed icons use a monochrome silhouette.
 
+## Connection recovery
+
+Transient MPD setup/control failures retry at most five times after 1, 2, 4, 8 and 16 seconds. A successfully restored connection resets the budget. An isolated idle/event-socket failure repairs only that socket, retaining healthy control and restoring status, current song, queue and subscriptions. No playback, queue or output mutation is automatically replayed. Protocol/permission errors require correction and manual Reconnect.
+
+The header distinguishes connection setup, control and idle failures, shows retry progress/network unavailability and offers **Reconnect** after exhaustion. A passive Android network callback suspends attempts while no network is known; LAN-only Wi-Fi does not require Internet validation. Network return resumes the remaining budget. Returning to the foreground performs one serialized ping/readback check; it neither replaces healthy sockets nor starts another retry loop. Foreground/network events do not reset an exhausted budget. A manual Reconnect starts a fresh budget. Switching/deleting/disconnecting cancels old retries immediately.
+
+Recovery of the same server preserves existing local HTTP playback and its MediaSession without recreating ExoPlayer. System controls are disabled while control connectivity is unavailable. The last confirmed playback state may be stale during an outage. Terminal control failure ends local listening; a healthy control connection with exhausted idle repair can retain it. HTTP/audio failures still require a manual local-audio retry and never restart automatically. No recovery enables **Listen on phone** on its own.
+
+Recovery is process-local: no new service, persistent work, additional polling, Wi-Fi lock or wake lock is added. Android can delay coroutine timers or kill the process in the background; the backoff is a minimum delay, not a screen-off availability guarantee. The existing local audio service remains the only foreground service. `ACCESS_NETWORK_STATE` is added solely for passive availability hints; no new runtime permission or dependency is needed.
+
 ## Technology and later work
 
 One app module, Kotlin, Compose/Material 3, ViewModel/StateFlow, Coroutines and Preferences DataStore. M4 adds only Media3 ExoPlayer and Session 1.11.1. The custom TCP client retains the tested Android-compatible ACK parser. System-bar icon contrast follows the selected theme, including live changes.
+
+M6 retains Media3 1.11.1 and adds no dependencies or permissions. System controls exist only while manually enabled local listening has a session; there is no playback resumption after shutdown. Android/OEM versions and accessories determine the exact notification/lock-screen layout and button delivery.
 
 M5 adds no dependencies or permissions: one non-exported receiver uses `setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP)`. No exact-alarm permission, boot receiver or additional foreground service is used. Password support remains excluded. Timer state uses a separate Preferences DataStore excluded from cloud backup and device transfer, so a device-bound alarm cannot be restored elsewhere. Arbitrary configured HTTP hosts require a deliberate application-wide cleartext network-security opt-in. INTERNET and the existing API 37 local-network permission remain; media playback adds FOREGROUND_SERVICE, FOREGROUND_SERVICE_MEDIA_PLAYBACK and WAKE_LOCK. No notification runtime permission is requested: Android exempts media-session notifications. See the architecture for service and audio-focus limits.
 
@@ -71,3 +83,13 @@ M5 adds no dependencies or permissions: one non-exported receiver uses `setAndAl
 - [Requirements](docs/REQUIREMENTS.md)
 - [Architecture and open decisions](docs/ARCHITECTURE.md)
 - [Development rules](AGENTS.md)
+
+## M6 manual acceptance on the phone
+
+1. Start MPD music from another client, then manually enable **Listen on phone** in this app.
+2. Check title/artist/state and the standard notification/lock screen, with no artwork or seek bar. Tap the notification to open the app.
+3. Test system Play/Pause, Next and Previous, then Bluetooth/headset play/pause/toggle and track buttons. Confirm the other MPD client sees those changes; phone volume remains separate.
+4. Change title and playback state from the other client. Verify the system display follows, including Pause while HTTP may still transmit silence.
+5. Disable **Listen on phone**. Confirm reception/session disappear and MPD continues unchanged. Check server switch clears the old session and leaves listening off; same-server Reconnect should preserve an active receiver.
+6. Repeat M4 listening checks: actual sound, screen-off/background reception, stream resume/latency, device volume, focus loss, headphone/Bluetooth route changes and failure/manual retry without unintended MPD commands.
+7. Repeat M5 timer checks: explicit pause at expiry reflected in the system display, timer without local listening, cancel/change duration, original target after selection changes and delayed delivery under power saving. Use a short custom timer; do not assume minute-exact delivery.

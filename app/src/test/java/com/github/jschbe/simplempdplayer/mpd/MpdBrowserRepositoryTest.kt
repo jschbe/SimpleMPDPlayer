@@ -154,8 +154,10 @@ class MpdBrowserRepositoryTest {
         assertEquals(ConnectionStatus.FAILED, repository.state.value.status)
         assertFalse(repository.browser.value.loading)
         assertTrue(server.connections.all { it.closed })
-        advanceTimeBy(30_000); runCurrent()
-        assertEquals(2, server.connections.size)
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(4, server.connections.size)
+        assertEquals(1, server.calls.count { it.first == "clear" })
+        assertEquals(1, server.calls.count { it.first == "add" })
         repository.close()
     }
 
@@ -216,7 +218,7 @@ class MpdBrowserRepositoryTest {
         repository.close()
     }
 
-    @Test fun switchingDuringAddRejectsLateAckAndIdleFailureDuringAddReportsPartialState() = runTest {
+    @Test fun switchingDuringAddRejectsLateAckAndIdleFailureDoesNotInterruptHealthyAdd() = runTest {
         val release = CompletableDeferred<Unit>()
         val old = LibraryServer()
         val next = LibraryServer()
@@ -230,12 +232,16 @@ class MpdBrowserRepositoryTest {
         assertNull(repository.browser.value.queueMessage)
         assertNull(repository.state.value.error)
         repository.loadBrowser(); runCurrent()
-        next.before = { name, _ -> if (name == "add") awaitCancellation() }
+        val addGate = CompletableDeferred<Unit>()
+        next.before = { name, _ -> if (name == "add") addGate.await() }
         repository.enqueue("Albums", true, repository.browser.value.generation); runCurrent()
         next.events.close(EOFException()); runCurrent()
-        assertEquals(BrowserQueueMessage.REPLACE_PARTIAL, repository.browser.value.queueMessage)
-        assertEquals(ConnectionStatus.FAILED, repository.state.value.status)
-        assertTrue(next.connections.all { it.closed })
+        assertTrue(repository.state.value.commandPending)
+        assertEquals(ConnectionStatus.CONNECTED, repository.state.value.status)
+        assertFalse(next.connections.first().closed)
+        addGate.complete(Unit); runCurrent()
+        assertEquals(BrowserQueueMessage.REPLACED, repository.browser.value.queueMessage)
+        assertFalse(repository.state.value.commandPending)
         repository.close()
     }
 

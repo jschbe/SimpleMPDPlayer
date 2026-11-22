@@ -245,9 +245,12 @@ class ServersViewModelTest {
         assertFalse(f.vm.state.value.localStream.enabled)
         assertEquals(2, starts)
         f.vm.setLocalListening(true)
+        f.connectGate = { assertTrue(stream.state.value.enabled) }
+        val generation = stream.request.value!!.generation
         f.vm.reconnect()
         runCurrent()
-        assertFalse(stream.state.value.enabled)
+        assertTrue(stream.state.value.enabled)
+        assertEquals(generation, stream.request.value!!.generation)
         assertEquals(3, starts)
     }
 

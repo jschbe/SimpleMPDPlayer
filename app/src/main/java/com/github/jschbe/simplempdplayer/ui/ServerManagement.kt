@@ -244,3 +244,10 @@ internal fun ConnectionError.label(): Int = when (this) {
     ConnectionError.NETWORK -> R.string.network_error
     ConnectionError.PERMISSION_REQUIRED -> R.string.local_network_permission_required
 }
+
+@StringRes
+internal fun com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.label(): Int = when (this) {
+    com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.CONNECT -> R.string.connection_source_connect
+    com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.CONTROL -> R.string.connection_source_control
+    com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.IDLE -> R.string.connection_source_idle
+}
