@@ -5,7 +5,9 @@ import android.os.Build
 import android.os.Bundle
 import android.content.pm.PackageManager
 import android.widget.Toast
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -18,14 +20,20 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalConfiguration
+import com.github.jschbe.simplempdplayer.ui.AppLanguage
 import com.github.jschbe.simplempdplayer.data.ServerSettingsStore
 import com.github.jschbe.simplempdplayer.data.serverDataStore
 import com.github.jschbe.simplempdplayer.ui.ServersApp
 import com.github.jschbe.simplempdplayer.ui.theme.SimpleMPDPlayerTheme
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        (application as PlayerApplication).streamBackend.refreshLanguage(resources.configuration)
         enableEdgeToEdge()
         setContent {
             val context = applicationContext
@@ -42,6 +50,11 @@ class MainActivity : ComponentActivity() {
             }
             val model: ServersViewModel = viewModel(factory = factory)
             val state = model.state.collectAsStateWithLifecycle().value
+            // Reading configuration makes external Android 13+ changes observable in Compose.
+            val configuration = LocalConfiguration.current
+            var language by remember(configuration) {
+                mutableStateOf(currentLanguage())
+            }
             LaunchedEffect(model) {
                 var toast: Toast? = null
                 try {
@@ -54,7 +67,7 @@ class MainActivity : ComponentActivity() {
                                 NoticeMessage.CONNECTED -> R.string.connected
                                 NoticeMessage.CONNECTION_FAILED -> R.string.connection_failed
                             }
-                            toast = Toast.makeText(context, text, Toast.LENGTH_SHORT).also { it.show() }
+                            toast = Toast.makeText(this@MainActivity, text, Toast.LENGTH_SHORT).also { it.show() }
                         }
                     }
                 } finally { toast?.cancel() }
@@ -62,7 +75,11 @@ class MainActivity : ComponentActivity() {
             val networkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
                 model.refreshNetworkPermission()
             }
-            LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.onForeground() }
+            LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+                model.onForeground()
+                // System -> explicit with the same effective locale need not recreate us.
+                language = currentLanguage()
+            }
             SimpleMPDPlayerTheme(mode = state.settings.theme) {
                 ServersApp(
                     state = state,
@@ -84,6 +101,11 @@ class MainActivity : ComponentActivity() {
                     onTest = model::test,
                     onReorder = model::reorder,
                     onTheme = model::setTheme,
+                    language = language,
+                    onLanguage = {
+                        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(it.tag))
+                        language = currentLanguage()
+                    },
                     onTrackInfoExpanded = model::setTrackInfoExpanded,
                     onReload = model::reloadSettings,
                     onGrantNetworkAccess = {
@@ -95,4 +117,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun currentLanguage() = AppLanguage.fromTags(AppCompatDelegate.getApplicationLocales().toLanguageTags())
 }

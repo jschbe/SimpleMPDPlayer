@@ -1,11 +1,16 @@
 package com.github.jschbe.simplempdplayer.audio
 
 import android.app.PendingIntent
+import android.app.NotificationManager
 import android.content.Intent
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
 import androidx.core.content.IntentCompat
+import androidx.core.content.ContextCompat
+import android.content.res.Configuration
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -49,9 +54,11 @@ class LocalStreamService : MediaSessionService() {
     private var remotePlaying = false
     private var watchdog: Job? = null
     private var observer: Job? = null
+    private var languageContext: Context? = null
 
     override fun onCreate() {
         super.onCreate()
+        refreshLanguage()
         owner.streamBackend.attach(this)
         setListener(object : Listener {
             override fun onForegroundServiceStartNotAllowedException() {
@@ -183,8 +190,9 @@ class LocalStreamService : MediaSessionService() {
     }
 
     private fun updateMetadata(request: StreamRequest) {
+        val localized = languageContext ?: ContextCompat.getContextForLanguage(this)
         val song = request.snapshot.currentSong
-        val status = getString(when (request.snapshot.status.playback) {
+        val status = localized.getString(when (request.snapshot.status.playback) {
             PlaybackState.PLAYING -> R.string.playing
             PlaybackState.PAUSED -> R.string.paused
             PlaybackState.STOPPED -> R.string.stopped
@@ -192,11 +200,34 @@ class LocalStreamService : MediaSessionService() {
         })
         val updated = MediaMetadata.Builder()
             .setTitle(song?.title ?: request.server.name)
-            .setArtist(song?.artists.orEmpty().joinToString(getString(R.string.metadata_separator)))
-            .setAlbumTitle(song?.albums.orEmpty().joinToString(getString(R.string.metadata_separator)))
-            .setSubtitle(getString(R.string.stream_notification_status, status))
+            .setArtist(song?.artists.orEmpty().joinToString(localized.getString(R.string.metadata_separator)))
+            .setAlbumTitle(song?.albums.orEmpty().joinToString(localized.getString(R.string.metadata_separator)))
+            .setSubtitle(localized.getString(R.string.stream_notification_status, status))
             .setIsBrowsable(false).setIsPlayable(true).build()
         sessionPlayer?.update(request, updated)
+    }
+
+    /** Refresh text only; retain decoder, HTTP connection, session and authorization. */
+    fun refreshLanguage(configuration: Configuration? = null) {
+        // On API 31/32 AppCompat persists asynchronously. The recreated Activity already
+        // has the effective locale; snapshot it without retaining the Activity itself.
+        val localized = configuration?.let(::createConfigurationContext) ?: ContextCompat.getContextForLanguage(this)
+        languageContext = localized
+        setMediaNotificationProvider(DefaultMediaNotificationProvider.Builder(localized).build())
+        // Media3 creates a channel only once; rename the existing channel while retaining
+        // its identity and user-controlled importance/sound settings.
+        val notifications = getSystemService(NotificationManager::class.java)
+        notifications.getNotificationChannel(DefaultMediaNotificationProvider.DEFAULT_CHANNEL_ID)?.let { channel ->
+            channel.name = localized.getString(DefaultMediaNotificationProvider.DEFAULT_CHANNEL_NAME_RESOURCE_ID)
+            notifications.createNotificationChannel(channel)
+        }
+        stream.request.value?.takeIf { it.generation == token }?.let(::updateMetadata)
+        triggerNotificationUpdate()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        refreshLanguage()
     }
 
     private fun publishState() {

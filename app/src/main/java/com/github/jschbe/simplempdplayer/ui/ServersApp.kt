@@ -49,6 +49,8 @@ fun ServersApp(
     onSleepMinutes: (Int) -> Unit = {},
     onSleepRetry: () -> Unit = {},
     onTrackInfoExpanded: (Boolean) -> Unit = {},
+    language: AppLanguage = AppLanguage.SYSTEM,
+    onLanguage: (AppLanguage) -> Unit = {},
 ) {
     val pager = rememberPagerState(initialPage = 1, pageCount = { 3 })
     val scope = rememberCoroutineScope()
@@ -58,6 +60,8 @@ fun ServersApp(
     var serverMenu by remember { mutableStateOf(false) }
     var sleepTimer by rememberSaveable { mutableStateOf(false) }
     var appearance by rememberSaveable { mutableStateOf(false) }
+    var languageDialog by rememberSaveable { mutableStateOf(false) }
+    var about by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.loading) {
         if (!state.loading && !initialNavigationResolved) {
             showServers = state.activeServer == null
@@ -114,6 +118,8 @@ fun ServersApp(
                             DropdownMenuItem(text = { Text(stringResource(R.string.servers)) }, onClick = { showServers = true; menu = false })
                             DropdownMenuItem(text = { Text(stringResource(R.string.sleep_timer)) }, onClick = { sleepTimer = true; menu = false })
                             DropdownMenuItem(text = { Text(stringResource(R.string.appearance)) }, onClick = { appearance = true; menu = false })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.language)) }, onClick = { languageDialog = true; menu = false })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.about)) }, onClick = { about = true; menu = false })
                         }
                     }
                 },
@@ -220,4 +226,6 @@ fun ServersApp(
             confirmButton = { TextButton(onClick = { appearance = false }) { Text(stringResource(R.string.done)) } },
         )
     }
+    if (languageDialog) LanguageDialog(language, onLanguage) { languageDialog = false }
+    if (about) AboutDialog { about = false }
 }

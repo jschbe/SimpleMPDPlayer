@@ -2,7 +2,7 @@
 
 A minimal Android client for Music Player Daemon (MPD), for Android 12 and newer.
 
-## Current milestone: M6
+## Current milestone: M7.2
 
 - Saved server profiles, header dropdown, persistent ordering, connection status, bounded automatic recovery and manual reconnect.
 - First-run setup, independent MPD connection test, and Save that activates/connects the profile.
@@ -16,9 +16,10 @@ A minimal Android client for Music Player Daemon (MPD), for Android 12 and newer
 - External changes through a separate MPD idle connection to the same active server.
 - Optional **Listen on phone** HTTP audio, Media3 background playback and MPD-backed system media controls with title/artist and playback state.
 - One persistent **Sleep timer**, independent of local listening, waiting for confirmed playback before counting down; duration dropdown and custom 1–1440 minutes.
-- English Material 3 UI; Servers management lives in the Settings overflow menu.
+- English fallback plus German, French, Italian, Spanish, Ukrainian and Russian; Settings → Language follows the system by default or persists an explicit app-language choice.
+- Settings → About shows the build version, GPL-3.0-or-later license, offline license/notices and public source.
 
-M6 has no search, stored-playlist support, password authentication, cover art, downloads, offline playback, accounts, cloud services or analytics. Transport controls operate MPD; local audio is a separate optional receiver.
+M7.2 has no search, stored-playlist support, password authentication, cover art, downloads, offline playback, accounts, cloud services or analytics. Transport controls operate MPD; local audio is a separate optional receiver.
 
 ## Build and test
 
@@ -101,3 +102,33 @@ M5 adds no dependencies or permissions: one non-exported receiver uses `setAndAl
 3. With timer Off, select **Custom…**, enter a valid value and press keyboard **Done**: duration changes, timer stays Off. Check 0/1441 rejection and dialog **Done** applying a valid value without enabling. Rotate while waiting/counting down and verify no reset/duplicate alarm.
 4. Check status/timer alignment, Random/Repeat groups and long titles at normal and large font sizes. Open the listening-info popup and confirm reception does not toggle. Collapse track details, change tracks/server, recreate/restart the app, and verify the saved preference remains.
 5. Let Android stop the process while waiting, then start MPD externally: no timer-only background detection is promised. On returning/reconnecting to the bound server, Playing starts a fresh full countdown. Repeat the existing media-control, local-audio and recovery checks.
+
+## License
+
+SimpleMPDPlayer is free software licensed under **GNU GPL version 3 or, at your
+option, any later version** (SPDX: `GPL-3.0-or-later`). See the complete [LICENSE](LICENSE).
+It is provided without warranty, as described there. Public project source:
+[github.com/jschbe/SimpleMPDPlayer](https://github.com/jschbe/SimpleMPDPlayer).
+The exact corresponding source and build files for any distributed binary must
+be made available under the GPL; local uncommitted changes are not published by
+this milestone. No commits or uploads are performed automatically.
+
+Third-party software retains its own licenses. [Notices and complete license
+texts](docs/THIRD_PARTY_NOTICES.txt) ship in the APK and are available offline in
+Settings → About, alongside the GPL. See the [dependency audit](docs/LICENSING.md).
+
+## Language acceptance on the phone
+
+1. Open Settings → Language. Try German, French, Russian and Ukrainian; check
+   Player, Browser, Queue, server editing, timer, dialogs and accessibility labels
+   with long metadata and a large system font. User names, paths and song tags
+   remain literal. Native language names stay the same in every language.
+2. Restart the app: an explicit language should survive. Select System default,
+   change the device language, and return: supported languages should follow it;
+   unsupported languages fall back to English. On Android 13+, also change the
+   app language from Android settings and check the in-app selection.
+3. With local listening/timer already enabled, switch language and check that
+   connection, stream, timer deadline and theme remain intact. Verify translated
+   media controls/subtitle where Android renders them; OS-owned UI can differ.
+4. Open About: check the installed version, GPL-3.0-or-later, full license and
+   third-party notices without network access, and the source link in a browser.

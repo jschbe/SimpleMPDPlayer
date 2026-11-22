@@ -15,6 +15,7 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
+        resourceConfigurations += listOf("en", "de", "fr", "it", "es", "uk", "ru")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -39,10 +40,32 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
+abstract class GenerateLegalResources : DefaultTask() {
+    @get:InputFile abstract val license: RegularFileProperty
+    @get:InputFile abstract val notices: RegularFileProperty
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction fun generate() {
+        val raw = outputDirectory.dir("raw").get().asFile.apply { mkdirs() }
+        license.get().asFile.copyTo(raw.resolve("gpl_v3.txt"), overwrite = true)
+        notices.get().asFile.copyTo(raw.resolve("third_party_notices.txt"), overwrite = true)
+    }
+}
+val generateLegalResources = tasks.register<GenerateLegalResources>("generateLegalResources") {
+    license.set(rootProject.layout.projectDirectory.file("LICENSE"))
+    notices.set(rootProject.layout.projectDirectory.file("docs/THIRD_PARTY_NOTICES.txt"))
+    outputDirectory.set(layout.buildDirectory.dir("generated/legalRes"))
+}
+androidComponents.onVariants { variant ->
+    variant.sources.res?.addGeneratedSourceDirectory(generateLegalResources, GenerateLegalResources::outputDirectory)
+}
+
 dependencies {
+    implementation(libs.androidx.appcompat)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

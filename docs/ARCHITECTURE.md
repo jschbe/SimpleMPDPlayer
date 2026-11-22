@@ -288,3 +288,127 @@ New JVM fixtures cover every Repeat transition with both Random states, independ
 New Compose fixtures verify all six combinations, three dropdown choices and selected state, confirmed display without optimistic changes, external/oneshot/stop-after-track/unknown display, disabled/menu-dismissal behavior, System/Light/Dark themes, compact alignment and 300 dp / 2x-font wrapping. A text-layout assertion found clipping in the initial dropdown implementation; intrinsic preferred width plus constrained text wrapping fixed it, and the final focused and complete suites passed. Existing player/navigation/browser/media/timer/recovery fixtures remain successful. Runtime coverage is API 36; physical-device rendering and other Android API levels were not exercised.
 
 Final ADB discovery showed only the emulator. The Samsung Galaxy A51 was not connected/authorized through ADB, so normal debug APK deployment was skipped as requested. No physical-device tests, app starts, MPD actions, profile changes, uninstall or data clearing were performed. The normal APK is available at `app/build/outputs/apk/debug/app-debug.apk` for a later data-preserving `adb -s <verified Samsung serial> install -r` deployment. The emulator started for this verification was stopped afterward.
+
+## M7.2 locales and legal information
+
+`MainActivity` now extends `AppCompatActivity` with a minimal
+`Theme.AppCompat.DayNight.NoActionBar` host theme; Compose still owns Material 3,
+System/Light/Dark and system-bar contrast. AppCompat **1.8.0** is the only added
+direct runtime dependency, managed in the version catalog. This stable release
+supports the retained minimum API 31. No existing dependency version is changed.
+
+`AppCompatDelegate.setApplicationLocales` is the sole setter. An empty locale
+list means System default. The metadata-holder service opts into AndroidX
+`autoStoreLocales`: Android 12/12L restore the override through AppCompat; Android
+13+ uses the framework locale store and synchronizes external app-language
+changes. There is no locale preference in profile DataStore and no custom
+ContextWrapper. AndroidX auto-storage performs a small blocking preferences read
+on older Android, as documented by Android. `AppLanguage` maps empty/supported/
+unknown tags for the picker only; it does not force English at startup.
+
+A manual `locales_config.xml` declares exactly en/de/fr/it/es/uk/ru; matching
+`resourceConfigurations` filters dependency translations too. Automatic locale
+config generation is not enabled. English remains unqualified and complete.
+Regional tags resolve through Android's normal resource fallback, with English
+for unsupported languages. The picker reads the override through AppCompat when
+Compose configuration changes, including after external API 33+ changes. The selection snapshot is also re-read after an in-app choice and on
+resume, because changing between System and an identical explicit locale need
+not change the resource Configuration. It is not a second persisted preference. Normal
+Activity recreation retains the ViewModel, saveable dialog/navigation state and
+process-owned repository/audio/timer. It invokes the existing single-flight
+foreground health read, without replacing healthy sockets or replaying mutations.
+
+Toasts use the localized Activity context. `LocalStreamService` obtains official
+`ContextCompat.getContextForLanguage` resources for metadata and the default
+Media3 notification provider. It refreshes those texts on service configuration
+changes and Activity creation after selection, retaining ExoPlayer, HTTP,
+MediaSession and receiver authorization. On API 31/32 the recreated Activity
+passes its effective Configuration to the service, which snapshots it with
+Android createConfigurationContext without retaining the Activity. This avoids
+reading the previous AndroidX locale before asynchronous auto-storage finishes.
+Media3 only creates its channel once; the service therefore also renames the
+existing channel using Media3’s localized name resource, preserving its ID and
+user-controlled settings. An explicit notification update refreshes the provider.
+Android/OEM controls what metadata/actions are shown. OS-owned strings
+can follow system rather than app language, especially on Android 12.
+
+Timer estimated wall-clock text now uses Android Context-based date/time
+formatters (resource locale, device time zone and 12/24-hour setting). Playback
+durations, protocol parsing, technical input and the timer's ASCII integer parser
+are unchanged. Native language names and product/source/license identifiers are
+in the catalogs; untranslated dynamic content is never passed through a translator.
+
+Language and About use scrollable Material 3 dialogs. Legal texts load on IO and
+render as selectable paragraphs in a lazy list. Version comes from generated
+`BuildConfig.VERSION_NAME`. `GenerateLegalResources` uses the Android variant
+sources API to package root `LICENSE` and `docs/THIRD_PARTY_NOTICES.txt` directly;
+there is no independently maintained app copy. See [licensing audit](LICENSING.md).
+
+References: [Android per-app languages](https://developer.android.com/guide/topics/resources/app-languages),
+[AppCompat stable release](https://developer.android.com/jetpack/androidx/releases/appcompat),
+[ContextCompat language context](https://developer.android.com/reference/androidx/core/content/ContextCompat#getContextForLanguage(android.content.Context)).
+
+### M7.2 verification and limits
+
+Verified on 2026-11-22 with the project Gradle wrapper: `assembleDebug`,
+`testDeviceTestUnitTest`, `assembleDeviceTest`, `assembleDeviceTestAndroidTest`
+and `lintDebug` pass. All **148 JVM tests** pass. Lint reports **0 errors and
+20 warnings**: 19 existing/deliberate warnings plus the expected API-33-only
+`localeConfig` attribute on the retained minimum API 31. No translation,
+format-string or plural warnings remain. `git diff --check` passes.
+
+The existing Medium Phone AVD was started for this run and its actual system
+reported **API 36**. Android tests were run with an explicitly selected emulator
+serial through the AndroidJUnitRunner after wrapper-built `.devicetest` APKs;
+this kept the connected physical phone outside test discovery. The complete
+suite passed **72 active tests**, with four expected opt-in assumptions (live LAN,
+two timer process-probe phases and the locale process probe). After the final
+notification/provider changes, all **24 focused service/localization tests**
+passed. After the final identical-system-locale selection handling, the five
+localization UI tests and the audio/timer locale integration test passed again.
+No real MPD endpoint was used.
+
+The explicit locale process probe was then enabled in two separate instrumentation
+processes: seed German plus a non-selected loopback profile/theme, stop only the
+suffixed test app, and verify restoration in a new process. Both phases passed;
+normal profiles were never cleared. Selection of all seven languages, returning
+to System, Android 13+ external language changes (including an identical effective
+system locale), unsupported-language English fallback, Russian/Ukrainian integer
+plurals, build version, offline GPL/notices and retained stream/socket/session/
+profile/theme/timer generation/deadline are covered. The media fixture asserts
+zero MPD mutations while languages change, plus updated subtitle/channel name.
+
+The translated layout fixture passed again with the emulator's actual Android
+font scale set to **2.0**, then restored to **1.0**. Screenshots of German, French,
+Russian and Ukrainian Player/listening, Language, timer and About were captured;
+representative screenshots were visually inspected. Scrollable long dialogs and
+large-font wrapping work; existing intentional Player ellipses remain. Metadata
+stays literal. The first fixture run exposed state reuse between synthetic
+screens; keying those fixture screens and supplying their resource context fixed
+the fixture, and subsequent normal/large-font runs pass.
+
+AAPT2 inspection confirms unqualified English plus exactly de/fr/it/es/uk/ru in
+the APK. GPL/notices extracted from the APK match their repository sources byte
+for byte. Debug runtime has 111 artifacts; all 108 release runtime artifacts are
+included in that audited set. GPL source SHA-256:
+`3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986`.
+
+Runtime locale coverage is API 36. Android 12/12L auto-storage/migration and
+Android 13 specifically were not exercised on those OS versions; they use the
+official AndroidX APIs and were built/linted. Actual device-language changes,
+TalkBack speech, Samsung notification/lock-screen rendering, Bluetooth/audio and
+translation review by native speakers remain manual acceptance. The supplied
+wording is preserved; automated completeness does not establish linguistic
+quality. Localized deadlines use Android formatters, but no separate 12/24-hour
+settings matrix was run. Before public binary distribution, publish matching
+corresponding source and confirm artwork/translation provenance as described in
+[licensing](LICENSING.md); this run makes no commits or uploads.
+
+The authorized Samsung Galaxy A51 was freshly discovered as **SM-A515F / API 33**.
+The normal debug APK installed successfully with `adb -s <detected serial>
+install -r app/build/outputs/apk/debug/app-debug.apk`; `pm path` confirmed the
+normal package remained installed and its first-install timestamp was unchanged.
+Only installation/package metadata was accessed: no Activity launch, instrumented
+test, uninstall, data clearing, system-language/settings change or MPD command was
+performed on the Samsung. The single emulator started for this run was stopped
+after testing. No commits, tags or pushes were created.

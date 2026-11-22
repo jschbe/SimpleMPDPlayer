@@ -1,6 +1,6 @@
 # Requirements
 
-SimpleMPDPlayer is a minimal Android MPD client for Android 12 / API 31 and newer. This file defines behavior; [architecture](ARCHITECTURE.md) describes implementation. UI strings, code comments and documentation are English.
+SimpleMPDPlayer is a minimal Android MPD client for Android 12 / API 31 and newer. This file defines behavior; [architecture](ARCHITECTURE.md) describes implementation. English is the UI source/fallback; code comments and documentation are English.
 
 ## Implemented: M1 server management
 
@@ -17,7 +17,7 @@ SimpleMPDPlayer is a minimal Android MPD client for Android 12 / API 31 and newe
 - Header shows the selected server name, subtle connection status and a Settings overflow menu. Offer manual reconnect when disconnected/failed; show understandable loading and error states.
 - Main tabs are **Browser, Player, Queue**, in that order. Player opens by default with a selected server. With no selection, open Servers management; with no profiles, automatically open Add server once per entry into the empty state. Cancel leaves the app usable without reopening the dialog.
 - Tabs and horizontal swipes share one state: left from Player opens Queue, right opens Browser, reverse gestures return to Player. Queue scrolls vertically. System Back returns to the parent only while Browser is visible in a subdirectory; otherwise retain existing Back behavior for Servers/dialogs and Android.
-- The header server-name dropdown lists stored profiles in order, marks the active one and switches without confirmation. Settings contains Servers, Sleep timer and Appearance. Servers is not a main tab.
+- The header server-name dropdown lists stored profiles in order, marks the active one and switches without confirmation. Settings contains Servers, Sleep timer, Appearance, Language and About. Servers is not a main tab.
 
 ### Player
 
@@ -110,9 +110,36 @@ SimpleMPDPlayer is a minimal Android MPD client for Android 12 / API 31 and newe
 - Preserve already enabled same-server HTTP playback/session during transient control repair and manual Reconnect; use confirmed readback after restoration without restarting ExoPlayer for unchanged playing state. Never auto-enable/restart local listening. Explicit Off/switch and terminal control failure still release it; an HTTP/audio failure remains local and manually retried. Metadata can be stale during loss of control/events.
 - Keep retries process-local with cancellable coroutine delays and passive callbacks. No permanent background service or additional polling solely for recovery. Existing heartbeat/audio lifecycle remains; Android power restrictions or process death can delay/prevent recovery. Add only the normal `ACCESS_NETWORK_STATE` permission; no dependency, runtime prompt or MPD configuration change.
 
+## Implemented: M7.2 localization and licensing
+
+- Support exactly English (`en`), German (`de`), French (`fr`), Italian (`it`),
+  Spanish (`es`), Ukrainian (`uk`) and Russian (`ru`). Complete unqualified
+  English resources provide fallback; unsupported language requests do not crash.
+- Settings → Language defaults to System default. Display native language names;
+  persist explicit selections, apply immediately and clear the override when
+  returning to System default. Android 13+ system app-language settings and the
+  picker share one authoritative selection. Follow Android's effective locale
+  list, including device-language changes when following the system.
+- A language configuration change preserves profiles, selection, theme, retained
+  MPD control/event connections, manually enabled local audio and timer records.
+  Do not send playback/queue commands or restart streaming just to translate UI.
+  Refresh app-owned toast/notification text; inherited/system rendering remains
+  Android's responsibility. Server/user metadata, paths and protocol tokens stay
+  literal. Estimated timer dates/times follow the effective resource locale and
+  device 12/24-hour preference; playback duration semantics stay unchanged.
+- Preserve the supplied translation catalogs. Validate completeness, XML/AAPT2
+  escaping, argument positions/types, plural forms and numeric bounds against
+  English and `strings-en.csv`. Support scrolling/wrapping and large fonts in
+  language/legal dialogs; no arbitrary character-count limits.
+- License the application under **GPL-3.0-or-later**, with the complete canonical
+  GPL v3 text at repository root. Settings → About displays the build version,
+  license identifier, warranty summary, offline GPL/third-party texts and public
+  source URL. Third-party grants/notices remain applicable. Do not publish,
+  commit or alter signing as part of this milestone.
+
 ## Future work
 
-Password authentication/storage and other features remain excluded from M6.
+Password authentication/storage and other features remain excluded from M7.2.
 
 ## Privacy and limits
 

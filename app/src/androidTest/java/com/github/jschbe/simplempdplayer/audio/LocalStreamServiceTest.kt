@@ -7,6 +7,10 @@ import android.content.Intent
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.SystemClock
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
+import com.github.jschbe.simplempdplayer.data.ThemeMode
+import com.github.jschbe.simplempdplayer.R
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
@@ -61,6 +65,8 @@ class LocalStreamServiceTest {
     }
 
     @After fun cleanup() {
+        runBlocking { app.sleepTimer.setEnabled(false); store.setTheme(ThemeMode.SYSTEM) }
+        main { AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList()) }
         main { mediaController?.release(); app.localStream.disable(); app.repository.close(); app.repository.networkChanged(true) }
         mediaController = null
         activity?.close()
@@ -69,6 +75,47 @@ class LocalStreamServiceTest {
             val settings = store.settings.first()
             settings.servers.forEach { store.delete(it.id) }
         }
+    }
+
+    @Test fun languageChangesRetainAudioSessionSocketsProfilesThemeAndTimer() {
+        runBlocking { store.setTheme(ThemeMode.DARK); app.sleepTimer.setMinutes(60); app.sleepTimer.setEnabled(true) }
+        enable()
+        waitFor { app.localStream.state.value.phase == StreamPhase.ACTIVE && app.sleepTimer.state.value.active }
+        val controller = controller()
+        val generation = app.localStream.request.value!!.generation
+        val record = app.sleepTimer.state.value.settings.record!!
+        val profiles = runBlocking { store.settings.first() }
+        val connections = fixture.mpdConnections.get()
+        val http = fixture.httpRequests.get()
+        for (tag in listOf("en", "de", "fr", "it", "es", "uk", "ru")) {
+            main { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tag)) }
+            waitFor {
+                var ready = false
+                activity!!.onActivity { ready = it.resources.configuration.locales[0].language == tag }
+                ready
+            }
+            var subtitle = ""
+            var channelName = ""
+            activity!!.onActivity {
+                subtitle = it.getString(R.string.stream_notification_status, it.getString(R.string.playing))
+                channelName = it.getString(androidx.media3.session.DefaultMediaNotificationProvider.DEFAULT_CHANNEL_NAME_RESOURCE_ID)
+            }
+            waitFor { controller.mediaMetadata.subtitle?.toString() == subtitle }
+            waitFor { app.getSystemService(android.app.NotificationManager::class.java)
+                .getNotificationChannel(androidx.media3.session.DefaultMediaNotificationProvider.DEFAULT_CHANNEL_ID)?.name?.toString() == channelName }
+            assertEquals(generation, app.localStream.request.value!!.generation)
+            assertEquals(connections, fixture.mpdConnections.get())
+            assertEquals(http, fixture.httpRequests.get())
+            assertEquals(record, app.sleepTimer.state.value.settings.record)
+            assertEquals(profiles, runBlocking { store.settings.first() })
+            assertTrue(fixture.mutations().isEmpty())
+        }
+        main { AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList()) }
+        activity!!.recreate()
+        assertEquals(record, app.sleepTimer.state.value.settings.record)
+        assertEquals(http, fixture.httpRequests.get())
+        assertTrue(fixture.mutations().isEmpty())
+        runBlocking { app.sleepTimer.setEnabled(false); store.setTheme(ThemeMode.SYSTEM) }
     }
 
     @Test fun manualStreamSurvivesRecreationAndBackgroundAndStopsCompletely() {

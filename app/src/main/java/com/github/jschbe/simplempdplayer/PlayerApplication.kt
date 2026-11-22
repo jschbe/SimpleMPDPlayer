@@ -58,6 +58,7 @@ class AndroidStreamBackend(private val context: Context) : StreamBackend {
     private var service: LocalStreamService? = null
     fun attach(value: LocalStreamService) { service = value }
     fun detach(value: LocalStreamService) { if (service === value) service = null }
+    fun refreshLanguage(configuration: android.content.res.Configuration) { service?.refreshLanguage(configuration) }
     override fun start(generation: Long) {
         context.startService(Intent(context, LocalStreamService::class.java).putExtra(LocalStreamService.GENERATION, generation))
     }

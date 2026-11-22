@@ -21,7 +21,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.github.jschbe.simplempdplayer.R
 import com.github.jschbe.simplempdplayer.timer.*
-import java.text.DateFormat
+import androidx.compose.ui.platform.LocalContext
 import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,7 +60,10 @@ internal fun SleepTimerDialog(
                 if (state.active) {
                     SleepRemaining(state)
                     state.estimatedEndMillis?.let {
-                        Text(stringResource(R.string.timer_estimated_end, DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it))))
+                        val context = LocalContext.current
+                        Text(stringResource(R.string.timer_estimated_end,
+                            android.text.format.DateFormat.getDateFormat(context).format(Date(it)) + " " +
+                                android.text.format.DateFormat.getTimeFormat(context).format(Date(it))))
                     }
                 } else Text(stringResource(timerStatusText(state)))
                 ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { if (editable && !delivering) expanded = it }) {
