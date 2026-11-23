@@ -207,7 +207,7 @@ internal class TimerMpdFixture : AutoCloseable {
                                     }
                                     "ping" -> send("OK\n")
                                     "status" -> send("state: $playbackState\nplaylist: 1\nplaylistlength: 0\nOK\n")
-                                    "currentsong", "playlistinfo" -> send("OK\n")
+                                    "currentsong" -> send("OK\n")
                                     "idle" -> {
                                         while (!closed && !socket.isClosed) {
                                             if (events.poll(100, TimeUnit.MILLISECONDS) != null) {

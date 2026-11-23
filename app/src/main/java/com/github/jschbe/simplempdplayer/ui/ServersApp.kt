@@ -22,6 +22,7 @@ import com.github.jschbe.simplempdplayer.data.ThemeMode
 import com.github.jschbe.simplempdplayer.mpd.ConnectionError
 import com.github.jschbe.simplempdplayer.mpd.ConnectionStatus
 import com.github.jschbe.simplempdplayer.mpd.PlayerAction
+import com.github.jschbe.simplempdplayer.mpd.QueueActionContext
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,6 +52,8 @@ fun ServersApp(
     onTrackInfoExpanded: (Boolean) -> Unit = {},
     language: AppLanguage = AppLanguage.SYSTEM,
     onLanguage: (AppLanguage) -> Unit = {},
+    onQueueAction: (PlayerAction.QueueAction, QueueActionContext) -> Unit = { _, _ -> },
+    onRetryQueue: (Long) -> Unit = {},
 ) {
     val pager = rememberPagerState(initialPage = 1, pageCount = { 3 })
     val scope = rememberCoroutineScope()
@@ -188,7 +191,8 @@ fun ServersApp(
                             onOpenSleepTimer = { sleepTimer = true })
                         2 -> QueueScreen(
                             state.connection.snapshot, state.settings.selectedId,
-                            controlsEnabled, pager.settledPage == 2, onAction,
+                            state.connection.sessionId.takeIf { connected },
+                            controlsEnabled, pager.settledPage == 2, onQueueAction, onRetryQueue,
                         )
                     }
                 }

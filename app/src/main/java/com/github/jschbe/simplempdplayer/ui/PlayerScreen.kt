@@ -35,7 +35,7 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
     val snapshot = state.connection.snapshot
     val status = snapshot?.status
     val song = snapshot?.currentSong
-    val hasQueue = !snapshot?.queue.isNullOrEmpty()
+    val hasQueue = snapshot?.hasQueuedSongs == true
     val duration = status?.duration
     var draggedPosition by remember(state.settings.selectedId, status?.songId) { mutableStateOf<Float?>(null) }
     var draggedVolume by remember(state.settings.selectedId, status?.volume) { mutableStateOf<Float?>(null) }

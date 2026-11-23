@@ -262,6 +262,9 @@ class ServersViewModel(
     }
 
     fun perform(action: PlayerAction) = repository.perform(action)
+    fun performQueue(action: PlayerAction.QueueAction, context: QueueActionContext) =
+        repository.performQueue(action, context)
+    fun retryQueue(sessionId: Long) = repository.retryQueue(sessionId)
 
     fun loadBrowser() = repository.loadBrowser()
     fun browse(path: String, generation: Long) = repository.browse(path, generation)

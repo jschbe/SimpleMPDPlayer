@@ -205,4 +205,10 @@
     <string name="app_license">GPL-3.0-or-later</string>
     <string name="source_repository_url">https://github.com/jschbe/SimpleMPDPlayer</string>
     <string name="duplicate_server_name">Сервер із такою назвою вже існує.</string>
+    <string name="queue_limit">Черга недоступна. Перевищено ліміт завантаження.</string>
+    <string name="queue_changing">Черга змінюється. Спробуйте завантажити її знову.</string>
+    <string name="queue_changed_action">Черга змінилася. Перевірте її та спробуйте знову.</string>
+    <string name="clear_queue_unavailable_message">Не вдалося показати чергу. Видалити всі композиції з активної черги MPD?</string>
+    <string name="library_listing_limit">У цій теці забагато даних для відображення.</string>
+    <string name="mpd_response_limit">Відповідь MPD перевищила ліміт завантаження.</string>
 </resources>

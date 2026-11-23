@@ -61,6 +61,12 @@ internal fun BrowserScreen(
             }
             if (connected && !controlsEnabled) Text(stringResource(R.string.applying_command), Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
             when {
+                browser.listingLimited -> Column(Modifier.padding(16.dp)) {
+                    ErrorText(R.string.library_listing_limit)
+                    TextButton(onClick = { onBrowse(browser.path, browser.generation) }, enabled = connected) {
+                        Text(stringResource(R.string.retry))
+                    }
+                }
                 !connected -> Text(stringResource(R.string.library_unavailable), Modifier.padding(16.dp))
                 browser.loading || (!browser.loaded && browser.error == null) -> Row(
                     Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),

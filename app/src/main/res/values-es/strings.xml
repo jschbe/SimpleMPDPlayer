@@ -204,4 +204,10 @@
     <string name="app_license">GPL-3.0-or-later</string>
     <string name="source_repository_url">https://github.com/jschbe/SimpleMPDPlayer</string>
     <string name="duplicate_server_name">Ya existe un servidor con este nombre.</string>
+    <string name="queue_limit">Cola no disponible. Se ha superado el límite de carga.</string>
+    <string name="queue_changing">La cola está cambiando. Intenta cargarla de nuevo.</string>
+    <string name="queue_changed_action">La cola ha cambiado. Revísala e inténtalo de nuevo.</string>
+    <string name="clear_queue_unavailable_message">No se pudo mostrar la cola. ¿Quitar todas las pistas de la cola activa de MPD?</string>
+    <string name="library_listing_limit">Esta carpeta contiene demasiados datos para mostrarlos.</string>
+    <string name="mpd_response_limit">Una respuesta de MPD superó el límite de carga.</string>
 </resources>

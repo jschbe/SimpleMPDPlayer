@@ -4,11 +4,12 @@
 
 M7.2 adds seven supported app languages: en/de/fr/it/es/uk/ru, with complete
 unqualified English fallback and the six supplied translations. There are now
-**196 strings and one plural name (197 names / 198 English CSV rows)**.
-`strings-en.csv` remains the canonical English review catalog; 19 new language/
-About/legal-navigation strings were appended with context. The earlier context
-line references below describe the preserved M7.1 audit snapshot, not current
-line numbers. Original English/source wording and existing translation wording
+**203 strings and one plural name (204 names / 205 English CSV rows)**.
+`strings-en.csv` remains the canonical English review catalog. The 19 language,
+About and legal-navigation strings and the six queue and response-limit strings
+include review context. The six queue and limit strings are available in all
+seven languages and introduce no format arguments or plural branches. The
+earlier context line references below record the M7.1 audit snapshot. Original English/source wording and existing translation wording
 were retained.
 
 Settings → Language offers System default plus native language names. It uses

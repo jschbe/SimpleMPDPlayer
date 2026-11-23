@@ -96,6 +96,8 @@ class MainActivity : AppCompatActivity() {
                     onSelect = model::select,
                     onReconnect = model::reconnect,
                     onAction = model::perform,
+                    onQueueAction = model::performQueue,
+                    onRetryQueue = model::retryQueue,
                     onLocalListening = model::setLocalListening,
                     onSleepEnabled = model::setSleepEnabled,
                     onSleepMinutes = model::setSleepMinutes,

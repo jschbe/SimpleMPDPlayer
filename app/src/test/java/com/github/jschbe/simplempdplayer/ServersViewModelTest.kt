@@ -250,14 +250,15 @@ class ServersViewModelTest {
         runCurrent()
         val control = f.connections.first()
         val pings = control.pings
-        val queueReads = control.commands.count { it == "playlistinfo" }
+        val statusReads = control.commands.count { it == "status" }
         repeat(4) { f.vm.onForeground(); f.vm.onWindowFocusGained() }
         runCurrent()
         advanceTimeBy(299); runCurrent()
         assertEquals(pings, control.pings)
         advanceTimeBy(1); runCurrent()
         assertEquals(pings + 1, control.pings)
-        assertEquals(queueReads + 1, control.commands.count { it == "playlistinfo" })
+        assertEquals(statusReads + 2, control.commands.count { it == "status" })
+        assertFalse(control.commands.contains("playlistinfo"))
         assertEquals(2, f.connections.size)
         assertTrue(f.connections.none { it.closed })
         assertEquals(first.id, f.vm.state.value.settings.selectedId)

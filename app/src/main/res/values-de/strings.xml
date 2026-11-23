@@ -203,4 +203,10 @@
     <string name="app_license">GPL-3.0-or-later</string>
     <string name="source_repository_url">https://github.com/jschbe/SimpleMPDPlayer</string>
     <string name="duplicate_server_name">Ein Server mit diesem Namen ist bereits vorhanden.</string>
+    <string name="queue_limit">Warteschlange nicht verfügbar. Das Ladelimit wurde überschritten.</string>
+    <string name="queue_changing">Die Warteschlange ändert sich gerade. Lade sie erneut.</string>
+    <string name="queue_changed_action">Die Warteschlange hat sich geändert. Prüfe sie und versuche es erneut.</string>
+    <string name="clear_queue_unavailable_message">Die Warteschlange konnte nicht angezeigt werden. Alle Titel aus der aktiven MPD-Warteschlange entfernen?</string>
+    <string name="library_listing_limit">Dieser Ordner enthält zu viele Daten für die Anzeige.</string>
+    <string name="mpd_response_limit">Eine MPD-Antwort hat das Ladelimit überschritten.</string>
 </resources>

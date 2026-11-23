@@ -29,6 +29,7 @@ data class BrowserState(
     val loaded: Boolean = false,
     val error: ConnectionError? = null,
     val queueMessage: BrowserQueueMessage? = null,
+    val listingLimited: Boolean = false,
 ) {
     val parent: String get() = path.substringBeforeLast('/', "")
 }

@@ -27,8 +27,11 @@ import kotlinx.coroutines.sync.withLock
 
 enum class ConnectionStatus { DISCONNECTED, CONNECTING, CONNECTED, FAILED }
 enum class ConnectionFailureSource { CONNECT, CONTROL, IDLE }
-enum class ConnectionCheckTrigger { FOREGROUND, WINDOW_FOCUS, NETWORK }
-enum class ConnectionError { REFUSED, UNREACHABLE, TIMEOUT, INVALID_RESPONSE, LOST, MPD_REJECTED, NETWORK, PERMISSION_REQUIRED }
+enum class ConnectionCheckTrigger { FOREGROUND, WINDOW_FOCUS, NETWORK, QUEUE_RETRY }
+enum class ConnectionError {
+    REFUSED, UNREACHABLE, TIMEOUT, INVALID_RESPONSE, LOST, MPD_REJECTED, NETWORK, PERMISSION_REQUIRED,
+    RESPONSE_LIMIT, QUEUE_CHANGED,
+}
 
 data class ConnectionState(
     val status: ConnectionStatus = ConnectionStatus.DISCONNECTED,
@@ -42,6 +45,7 @@ data class ConnectionState(
     val retriesExhausted: Boolean = false,
     val waitingForNetwork: Boolean = false,
     val idleConnected: Boolean = false,
+    val sessionId: Long? = null,
 )
 
 /** Main-scope owner of two technical connections to exactly one active server. */
@@ -55,6 +59,7 @@ class MpdRepository(
     private class Session(val command: MpdConnection, var events: MpdConnection?, val work: Job) {
         val operations = Mutex()
         var browserRequest = 0L
+        var lastUnstableQueueRead: Long? = null
         var closed = false
         var listener: Job? = null
         var heartbeat: Job? = null
@@ -76,6 +81,10 @@ class MpdRepository(
     private var session: Session? = null
     private var recoveryJob: Job? = null
     private var generation = 0L
+    private var nextSessionId = 0L
+    // Keep the first recovery readback small after an unfinished range closed the control socket.
+    private var queueReadsSuspended = false
+    private var limitedCurrentSong: MpdStatus? = null
     private var retryAttempt = 0
     private val networkAvailable = MutableStateFlow(true)
 
@@ -130,7 +139,7 @@ class MpdRepository(
         mutableBrowser.value = BrowserState(generation = browser.value.generation + 1)
         mutableState.update { it.copy(status = ConnectionStatus.CONNECTING, error = null, commandPending = false,
             commandError = null, recovering = true, retryAttempt = 0, retriesExhausted = false,
-            waitingForNetwork = !networkAvailable.value, idleConnected = false) }
+            waitingForNetwork = !networkAvailable.value, idleConnected = false, sessionId = null) }
         if (networkAvailable.value) startConnection() else scheduleRecovery()
     }
 
@@ -139,7 +148,7 @@ class MpdRepository(
         if (token != generation) return
         val current = Session(connectionFactory(), connectionFactory(), SupervisorJob(scope.coroutineContext[Job]))
         session = current
-        mutableState.update { it.copy(status = ConnectionStatus.CONNECTING, commandPending = false) }
+        mutableState.update { it.copy(status = ConnectionStatus.CONNECTING, commandPending = false, sessionId = ++nextSessionId) }
         try {
             current.command.connect(server.host, server.mpdPort)
             current.command.ping()
@@ -155,7 +164,7 @@ class MpdRepository(
                 catch (error: IOException) { fail(current, classify(error)) }
                 catch (_: SecurityException) { fail(current, ConnectionError.PERMISSION_REQUIRED) }
             }
-            openIdle(current)
+            openIdle(current, forceQueue = false)
         } catch (cancelled: CancellationException) {
             current.close()
             throw cancelled
@@ -166,7 +175,7 @@ class MpdRepository(
         }
     }
 
-    private suspend fun openIdle(current: Session) {
+    private suspend fun openIdle(current: Session, forceQueue: Boolean = true) {
         if (!isCurrent(current)) return
         val server = activeServer ?: return
         val events = current.events ?: connectionFactory().also { current.events = it }
@@ -192,7 +201,7 @@ class MpdRepository(
             }
         }
         try {
-            current.operations.withLock { refresh(current, forceQueue = true) }
+            current.operations.withLock { refresh(current, forceQueue = forceQueue) }
             if (!isCurrent(current) || current.events !== events) return
             retryAttempt = 0
             mutableState.update { it.copy(error = null, recovering = false, retryAttempt = 0,
@@ -214,7 +223,8 @@ class MpdRepository(
     }
 
     private fun retryable(error: ConnectionError) = error in setOf(ConnectionError.REFUSED,
-        ConnectionError.UNREACHABLE, ConnectionError.TIMEOUT, ConnectionError.LOST, ConnectionError.NETWORK)
+        ConnectionError.UNREACHABLE, ConnectionError.TIMEOUT, ConnectionError.LOST, ConnectionError.NETWORK,
+        ConnectionError.RESPONSE_LIMIT)
 
     /** One bounded repair loop for both full reconnects and isolated event-socket repairs. */
     private fun scheduleRecovery() {
@@ -246,7 +256,10 @@ class MpdRepository(
     fun networkChanged(available: Boolean) {
         val changed = networkAvailable.value != available
         networkAvailable.value = available
-        mutableState.update { it.copy(waitingForNetwork = activeServer != null && !available) }
+        mutableState.update {
+            it.copy(waitingForNetwork = activeServer != null && !available,
+                sessionId = if (changed && it.sessionId != null) ++nextSessionId else it.sessionId)
+        }
         if (changed && available) checkConnection(ConnectionCheckTrigger.NETWORK)
     }
 
@@ -262,6 +275,7 @@ class MpdRepository(
                 current.operations.withLock {
                     if (!isCurrent(current)) return@withLock
                     current.command.ping()
+                    if (trigger == ConnectionCheckTrigger.QUEUE_RETRY) queueReadsSuspended = false
                     refresh(current, forceQueue = true)
                     if (isCurrent(current)) diagnostics("checked generation=$generation trigger=$trigger idle=${state.value.idleConnected}")
                 }
@@ -272,16 +286,38 @@ class MpdRepository(
     }
 
     /** The optional authorization is rechecked after waiting for IO/locks, before mutation. */
-    fun perform(action: PlayerAction, authorized: () -> Boolean = { true }): Job? {
+    fun perform(action: PlayerAction, authorized: () -> Boolean = { true }): Job? =
+        if (action is PlayerAction.QueueAction) null else performAuthorized(action, null, authorized)
+
+    fun performQueue(action: PlayerAction.QueueAction, context: QueueActionContext): Job? =
+        performAuthorized(action, context) { state.value.sessionId == context.sessionId && networkAvailable.value }
+
+    fun retryQueue(sessionId: Long) {
+        if (state.value.sessionId != sessionId || state.value.commandPending) return
+        checkConnection(ConnectionCheckTrigger.QUEUE_RETRY)
+    }
+
+    private fun performAuthorized(
+        action: PlayerAction,
+        queueContext: QueueActionContext?,
+        authorized: () -> Boolean,
+    ): Job? {
         val current = session ?: return null
-        if (state.value.status != ConnectionStatus.CONNECTED || state.value.commandPending || !networkAvailable.value || !authorized()) return null
+        if (!isCurrent(current) || state.value.status != ConnectionStatus.CONNECTED ||
+            state.value.commandPending || !networkAvailable.value || !authorized()
+        ) return null
         mutableState.update { it.copy(commandPending = true, commandError = null) }
         return scope.launch(current.work) {
             try {
                 current.operations.withLock {
                     if (!isCurrent(current) || !authorized()) return@withLock
                     try {
-                        executeAction(current.command, action) { isCurrent(current) && authorized() }
+                        val stillAuthorized = { isCurrent(current) && authorized() }
+                        if (action is PlayerAction.QueueAction && queueContext != null) {
+                            executeQueueAction(current.command, action, queueContext, stillAuthorized)
+                        } else {
+                            executeAction(current.command, action, stillAuthorized)
+                        }
                     } catch (_: MpdAckException) {
                         if (session === current) mutableState.update { it.copy(commandError = ConnectionError.MPD_REJECTED) }
                     }
@@ -302,7 +338,9 @@ class MpdRepository(
 
     fun loadBrowser() {
         val value = browser.value
-        if (!value.loaded && !value.loading && value.error == null) browse(value.path, value.generation)
+        if (!value.loaded && !value.loading && value.error == null && !value.listingLimited) {
+            browse(value.path, value.generation)
+        }
     }
 
     fun browse(path: String, generation: Long) {
@@ -328,6 +366,12 @@ class MpdRepository(
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (_: MpdResponseLimit) {
+                if (isCurrent(current) && request == current.browserRequest) {
+                    mutableBrowser.update { it.copy(listingLimited = true) }
+                }
+                // There may still be unread fields and the terminator on this socket.
+                fail(current, ConnectionError.RESPONSE_LIMIT)
             } catch (_: MpdAckException) {
                 if (isCurrent(current) && request == current.browserRequest) {
                     mutableBrowser.update { it.copy(loading = false, error = ConnectionError.MPD_REJECTED) }
@@ -373,6 +417,7 @@ class MpdRepository(
                             cleared = true
                             currentCoroutineContext().ensureActive()
                             if (!isCurrent(current)) return@withLock
+                            queueReadsSuspended = false
                         }
                         current.command.execute("add", uri)
                         added = true
@@ -420,7 +465,7 @@ class MpdRepository(
             PlayerAction.Stop -> client.execute("stop")
             PlayerAction.Previous -> client.execute("previous")
             PlayerAction.Next -> client.execute("next")
-            PlayerAction.Clear -> client.execute("clear")
+            is PlayerAction.QueueAction -> error("Queue action requires a session context")
             is PlayerAction.Random -> client.execute("random", if (action.enabled) "1" else "0")
             is PlayerAction.Repeat -> {
                 // Fresh status avoids relying on an idle snapshot that may already be stale.
@@ -447,44 +492,189 @@ class MpdRepository(
                     client.execute("seekcur", action.seconds.coerceAtMost(status.duration).toString())
                 }
             }
-            is PlayerAction.PlayId -> if (action.id >= 0) client.execute("playid", action.id.toString())
-            is PlayerAction.DeleteId -> if (action.id >= 0) client.execute("deleteid", action.id.toString())
-            is PlayerAction.MoveId -> {
-                if (action.offset != -1 && action.offset != 1) return
-                val queue = MpdData.queue(client.execute("playlistinfo"))
-                val index = queue.indexOfFirst { it.id == action.id }
-                val target = index + action.offset
-                if (index >= 0 && target in queue.indices) {
-                    client.execute("moveid", action.id.toString(), target.toString())
-                }
+        }
+    }
+
+    private suspend fun executeQueueAction(
+        client: MpdConnection,
+        action: PlayerAction.QueueAction,
+        context: QueueActionContext,
+        authorized: () -> Boolean,
+    ) {
+        val snapshot = state.value.snapshot ?: return
+        if (action == PlayerAction.Clear) {
+            if (!snapshot.hasQueuedSongs) return
+            val version = context.clearVersion
+            if (version == null && snapshot.queueAvailability == QueueAvailability.COMPLETE) return
+            if (version != null && readStatus(client).queueVersion != version) {
+                if (authorized()) mutableState.update { it.copy(commandError = ConnectionError.QUEUE_CHANGED) }
+                return
             }
+            if (authorized()) {
+                client.execute("clear")
+                currentCoroutineContext().ensureActive()
+                if (authorized()) queueReadsSuspended = false
+            }
+            return
+        }
+        if (snapshot.queueAvailability != QueueAvailability.COMPLETE) return
+        val id = when (action) {
+            is PlayerAction.PlayId -> action.id
+            is PlayerAction.DeleteId -> action.id
+            is PlayerAction.MoveId -> action.id
+            PlayerAction.Clear -> return
+        }
+        val index = snapshot.queue.indexOfFirst { it.id == id }
+        if (index == -1) return
+        when (action) {
+            is PlayerAction.PlayId -> client.execute("playid", id.toString())
+            is PlayerAction.DeleteId -> client.execute("deleteid", id.toString())
+            is PlayerAction.MoveId -> {
+                val target = index + action.offset
+                if (action.offset !in setOf(-1, 1) || target !in snapshot.queue.indices) return
+                if (!readStatus(client).sameQueue(snapshot.status)) {
+                    if (authorized()) mutableState.update { it.copy(commandError = ConnectionError.QUEUE_CHANGED) }
+                    return
+                }
+                if (authorized()) client.execute("moveid", id.toString(), target.toString())
+            }
+            PlayerAction.Clear -> Unit
+        }
+    }
+
+    private data class QueueRead(
+        val status: MpdStatus,
+        val availability: QueueAvailability,
+        val entries: List<QueueEntry> = emptyList(),
+    )
+
+    private fun MpdStatus.sameQueue(other: MpdStatus): Boolean =
+        queueVersion == other.queueVersion && queueLength == other.queueLength
+
+    private suspend fun readStatus(client: MpdConnection): MpdStatus =
+        MpdData.status(client.execute("status")).also {
+            if (it.queueVersion == null || it.queueLength == null) throw InvalidMpdResponse()
+        }
+
+    private suspend fun readQueue(
+        current: Session,
+        before: MpdStatus,
+        deadline: Long,
+    ): QueueRead {
+        val client = current.command
+        val length = checkNotNull(before.queueLength)
+        if (length == 0) {
+            queueReadsSuspended = false
+            return QueueRead(before, QueueAvailability.COMPLETE)
+        }
+        if (length > MAX_QUEUE_SONGS || queueReadsSuspended) return QueueRead(before, QueueAvailability.LIMIT)
+        val entries = ArrayList<QueueEntry>(length)
+        val ids = HashSet<Long>()
+        var confirmed = before
+        var characters = 0
+        var fieldCount = 0
+        for (start in 0 until length step QUEUE_BATCH_SONGS) {
+            currentCoroutineContext().ensureActive()
+            if (nanoTime() - deadline >= 0) return QueueRead(confirmed, QueueAvailability.LIMIT)
+            val end = minOf(start + QUEUE_BATCH_SONGS, length)
+            val fields = try {
+                client.execute("playlistinfo", "$start:$end")
+            } catch (limit: MpdResponseLimit) {
+                if (isCurrent(current)) queueReadsSuspended = true
+                throw limit
+            } catch (ack: MpdAckException) {
+                // MPD can reject a range whose start moved beyond the end of a shrinking queue.
+                if (ack.code != 2 || ack.command != "playlistinfo") throw ack
+                currentCoroutineContext().ensureActive()
+                val after = readStatus(client)
+                if (before.sameQueue(after)) throw ack
+                return QueueRead(after, QueueAvailability.CHANGING)
+            }
+            currentCoroutineContext().ensureActive()
+            if (nanoTime() - deadline >= 0) return QueueRead(confirmed, QueueAvailability.LIMIT)
+            confirmed = readStatus(client)
+            if (!before.sameQueue(confirmed)) return QueueRead(confirmed, QueueAvailability.CHANGING)
+            val batch = MpdData.queue(fields, start)
+            if (batch.size != end - start || batch.any { !ids.add(it.id) }) throw InvalidMpdResponse()
+            fieldCount += fields.size
+            characters += fields.sumOf { (key, value) -> key.length + value.length + 3 }
+            if (characters > MAX_QUEUE_CHARACTERS || fieldCount > MAX_QUEUE_FIELDS ||
+                nanoTime() - deadline >= 0
+            ) return QueueRead(confirmed, QueueAvailability.LIMIT)
+            entries.addAll(batch)
+        }
+        return QueueRead(confirmed, QueueAvailability.COMPLETE, entries)
+    }
+
+    private suspend fun readCurrentSong(current: Session, status: MpdStatus): MpdSong? {
+        if (limitedCurrentSong?.let { it.songId == status.songId } == true) return null
+        limitedCurrentSong = null
+        return try {
+            MpdData.currentSong(current.command.execute("currentsong"))
+        } catch (limit: MpdResponseLimit) {
+            if (isCurrent(current)) limitedCurrentSong = status
+            throw limit
         }
     }
 
     /** All callers hold this session's operations lock, so command + refresh cannot interleave. */
     private suspend fun refresh(current: Session, forceQueue: Boolean = false) {
         if (!isCurrent(current)) return
-        repeat(3) {
-            val before = MpdData.status(current.command.execute("status"))
-            val song = MpdData.currentSong(current.command.execute("currentsong"))
-            val old = state.value.snapshot
-            val queue = if (forceQueue || old == null || before.queueVersion == null || before.queueVersion != old.status.queueVersion) {
-                MpdData.queue(current.command.execute("playlistinfo"))
-            } else old.queue
-            val after = MpdData.status(current.command.execute("status"))
+        val client = current.command
+        val deadline = nanoTime() + QUEUE_LOAD_NANOS
+        var before = readStatus(client)
+        val old = state.value.snapshot
+        val deferUnstableRead = !forceQueue &&
+            current.lastUnstableQueueRead?.let { nanoTime() - it < QUEUE_RETRY_NANOS } == true
+        var checkedQueue: QueueRead? = null
+        repeat(3) { attempt ->
+            currentCoroutineContext().ensureActive()
             if (!isCurrent(current)) return
-            if (before.queueVersion == after.queueVersion && before.songId == after.songId &&
-                song?.id == after.songId && (after.queueLength == null || after.queueLength == queue.size)
-            ) {
-                val snapshot = MpdSnapshot(after, song, queue, nanoTime())
-                mutableState.update { it.copy(status = ConnectionStatus.CONNECTED,
-                    error = if (it.failureSource == ConnectionFailureSource.IDLE && !it.idleConnected) it.error else null,
-                    snapshot = snapshot) }
-                return
+            val queue = checkedQueue ?: when {
+                !forceQueue && old != null && old.queueAvailability != QueueAvailability.CHANGING &&
+                    before.sameQueue(old.status) -> QueueRead(before, old.queueAvailability, old.queue)
+                deferUnstableRead && before.queueLength != 0 -> QueueRead(before, QueueAvailability.CHANGING)
+                else -> readQueue(current, before, deadline)
             }
+            val canRetry = attempt < 2 && nanoTime() - deadline < 0
+            if (queue.availability == QueueAvailability.CHANGING && !queue.status.sameQueue(before) && canRetry) {
+                before = queue.status
+                return@repeat
+            }
+            currentCoroutineContext().ensureActive()
+            if (!isCurrent(current)) return
+            val song = readCurrentSong(current, queue.status)
+            currentCoroutineContext().ensureActive()
+            val after = readStatus(client)
+            currentCoroutineContext().ensureActive()
+            if (!isCurrent(current)) return
+            val sameSong = queue.status.songId == after.songId
+            val sameQueue = queue.status.sameQueue(after)
+            val songMatches = sameSong && (limitedCurrentSong != null || song?.id == after.songId)
+            if ((!songMatches || !sameQueue) && canRetry && nanoTime() - deadline < 0) {
+                checkedQueue = queue.copy(status = after).takeIf { sameQueue }
+                before = after
+                return@repeat
+            }
+            if (sameSong && sameQueue && !songMatches) throw InvalidMpdResponse()
+
+            val availability = when {
+                after.queueLength == 0 -> QueueAvailability.COMPLETE
+                sameQueue -> queue.availability
+                else -> QueueAvailability.CHANGING
+            }
+            if (after.queueLength == 0) queueReadsSuspended = false
+            if (!deferUnstableRead) {
+                current.lastUnstableQueueRead = nanoTime().takeIf { availability == QueueAvailability.CHANGING }
+            }
+            val snapshot = MpdSnapshot(after, song.takeIf { songMatches },
+                queue.entries.takeIf { sameQueue && availability == QueueAvailability.COMPLETE }.orEmpty(),
+                nanoTime(), availability)
+            mutableState.update { it.copy(status = ConnectionStatus.CONNECTED,
+                error = if (it.failureSource == ConnectionFailureSource.IDLE && !it.idleConnected) it.error else null,
+                snapshot = snapshot) }
+            return
         }
-        // Bound retries if another client continuously changes the queue during snapshot loading.
-        throw InvalidMpdResponse()
     }
 
     private fun fail(current: Session, error: ConnectionError, source: ConnectionFailureSource = ConnectionFailureSource.CONTROL) {
@@ -492,7 +682,7 @@ class MpdRepository(
         diagnostics("failure generation=$generation source=$source category=$error attempt=$retryAttempt")
         current.close()
         mutableState.update { it.copy(status = ConnectionStatus.FAILED, error = error, commandPending = false,
-            failureSource = source, idleConnected = false, recovering = retryable(error),
+            failureSource = source, idleConnected = false, recovering = retryable(error), sessionId = null,
             waitingForNetwork = !networkAvailable.value) }
         mutableBrowser.update { it.copy(generation = it.generation + 1, entries = emptyList(), loaded = false, loading = false, error = null) }
         scheduleRecovery()
@@ -511,12 +701,15 @@ class MpdRepository(
     fun close() {
         cancelConnections()
         activeServer = null
+        queueReadsSuspended = false
+        limitedCurrentSong = null
         mutableState.value = ConnectionState()
         mutableBrowser.value = BrowserState(generation = browser.value.generation + 1)
     }
 
     private fun classify(error: IOException): ConnectionError = when (error) {
         is InvalidMpdResponse -> ConnectionError.INVALID_RESPONSE
+        is MpdResponseLimit -> ConnectionError.RESPONSE_LIMIT
         is MpdAckException -> ConnectionError.MPD_REJECTED
         is SocketTimeoutException -> ConnectionError.TIMEOUT
         is UnknownHostException, is NoRouteToHostException -> ConnectionError.UNREACHABLE
@@ -528,6 +721,13 @@ class MpdRepository(
     }
 
     companion object {
+        private const val QUEUE_BATCH_SONGS = 200
+        private const val MAX_QUEUE_SONGS = 20_000
+        private const val MAX_QUEUE_FIELDS = 300_000
+        private const val MAX_QUEUE_CHARACTERS = 8 * 1_024 * 1_024
+        private const val QUEUE_LOAD_NANOS = 8_000_000_000L
+        private const val QUEUE_RETRY_NANOS = 1_000_000_000L
+
         /** Independent, bounded one-shot connection. Never toggles playback or touches the queue. */
         suspend fun pauseForTimer(
             server: ServerProfile,

@@ -37,12 +37,18 @@ data class MpdSong(
 
 data class QueueEntry(val id: Long, val song: MpdSong)
 
+enum class QueueAvailability { COMPLETE, LIMIT, CHANGING }
+
+data class QueueActionContext(val sessionId: Long, val clearVersion: Long? = null)
+
 data class MpdSnapshot(
     val status: MpdStatus,
     val currentSong: MpdSong?,
     val queue: List<QueueEntry>,
     val capturedAtNanos: Long,
+    val queueAvailability: QueueAvailability = QueueAvailability.COMPLETE,
 ) {
+    val hasQueuedSongs: Boolean get() = status.queueLength?.let { it > 0 } ?: queue.isNotEmpty()
     fun positionAt(nowNanos: Long): Double? {
         val elapsed = status.elapsed ?: return null
         val delta = if (status.playback == PlaybackState.PLAYING) {
@@ -60,14 +66,15 @@ sealed interface PlayerAction {
     data object Stop : PlayerAction
     data object Previous : PlayerAction
     data object Next : PlayerAction
-    data object Clear : PlayerAction
+    sealed interface QueueAction : PlayerAction
+    data object Clear : QueueAction
     data class Seek(val seconds: Double, val songId: Long?) : PlayerAction
     data class Volume(val value: Int) : PlayerAction
     data class Random(val enabled: Boolean) : PlayerAction
     data class Repeat(val mode: RepeatMode) : PlayerAction
-    data class PlayId(val id: Long) : PlayerAction
-    data class DeleteId(val id: Long) : PlayerAction
-    data class MoveId(val id: Long, val offset: Int) : PlayerAction
+    data class PlayId(val id: Long) : QueueAction
+    data class DeleteId(val id: Long) : QueueAction
+    data class MoveId(val id: Long, val offset: Int) : QueueAction
 }
 
 /** Missing metadata/options stay unknown; malformed identities and queue numbers are protocol errors. */
@@ -104,7 +111,7 @@ internal object MpdData {
     fun currentSong(fields: List<Pair<String, String>>): MpdSong? =
         if (fields.isEmpty()) null else song(fields)
 
-    fun queue(fields: List<Pair<String, String>>): List<QueueEntry> {
+    fun queue(fields: List<Pair<String, String>>, start: Int? = null): List<QueueEntry> {
         if (fields.isEmpty()) return emptyList()
         val records = mutableListOf<MutableList<Pair<String, String>>>()
         for (field in fields) {
@@ -113,7 +120,10 @@ internal object MpdData {
             records.last().add(field)
         }
         val ids = mutableSetOf<Long>()
-        return records.map { record ->
+        return records.mapIndexed { index, record ->
+            if (start != null && record.filter { it.first == "Pos" }.singleOrNull()?.second?.toIntOrNull() != start + index) {
+                throw InvalidMpdResponse()
+            }
             val song = song(record)
             val id = song.id ?: throw InvalidMpdResponse()
             if (!ids.add(id)) throw InvalidMpdResponse()
@@ -124,7 +134,9 @@ internal object MpdData {
     private fun song(fields: List<Pair<String, String>>): MpdSong {
         val values = fields.groupBy({ it.first.lowercase() }, { it.second })
         val file = values["file"]?.singleOrNull()?.takeIf { it.isNotBlank() } ?: throw InvalidMpdResponse()
-        val idText = values["id"]?.singleOrNull()
+        val ids = values["id"].orEmpty()
+        if (ids.size > 1) throw InvalidMpdResponse()
+        val idText = ids.singleOrNull()
         val id = idText?.toLongOrNull()?.takeIf { it >= 0 }
         if (idText != null && id == null) throw InvalidMpdResponse()
         return MpdSong(

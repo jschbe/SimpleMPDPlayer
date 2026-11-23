@@ -94,11 +94,14 @@ class MpdClient(
         while (true) {
             val line = readLine()
             characters += line.length
-            if (characters > 1_048_576 || fields.size > 10_000) throw InvalidMpdResponse()
             when {
                 line == "OK" -> return fields
                 line.startsWith("ACK") -> throw MpdProtocol.parseAck(line)
-                else -> fields.add(MpdProtocol.parseField(line))
+                else -> {
+                    val field = MpdProtocol.parseField(line)
+                    if (characters > 1_048_576 || fields.size == 10_000) throw MpdResponseLimit()
+                    fields.add(field)
+                }
             }
         }
     }
@@ -111,9 +114,8 @@ class MpdClient(
                 val character = input.read()
                 if (character < 0) throw EOFException("Connection lost")
                 if (character == '\n'.code) return line.toString()
-                if (character == '\r'.code || character == 0 || line.length >= 65_536) {
-                    throw InvalidMpdResponse()
-                }
+                if (character == '\r'.code || character == 0) throw InvalidMpdResponse()
+                if (line.length == 65_536) throw MpdResponseLimit()
                 line.append(character.toChar())
             }
         } catch (_: CharacterCodingException) {

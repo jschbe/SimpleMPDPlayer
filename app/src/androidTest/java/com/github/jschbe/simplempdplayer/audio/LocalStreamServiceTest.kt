@@ -453,12 +453,14 @@ class LocalStreamServiceTest {
         waitFor { !original.hasWindowFocus() }
         val resumeCount = resumes.get()
         val reads = fixture.statusReads.get()
+        // A forced read checks status first, after the fixture's single range, and after currentsong.
+        val statusReadsPerCheck = 3
         fixture.title = "Focus readback title"
         fixture.playback("pause", notify = false)
         main { dialog.dismiss() }
         waitFor { original.hasWindowFocus() && app.repository.state.value.snapshot?.currentSong?.title == fixture.title }
         assertEquals(resumeCount, resumes.get()) // Actual window focus changed without a resume callback.
-        assertEquals(reads + 2, fixture.statusReads.get())
+        assertEquals(reads + statusReadsPerCheck, fixture.statusReads.get())
         assertEquals(com.github.jschbe.simplempdplayer.mpd.PlaybackState.PAUSED, app.repository.state.value.snapshot!!.status.playback)
 
         // Focus before resume is ignored while STARTED; resume must still request the check.
@@ -469,9 +471,9 @@ class LocalStreamServiceTest {
         assertEquals(before, fixture.statusReads.get())
         activity!!.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
         activity!!.onActivity { repeat(4) { _ -> it.onWindowFocusChanged(true) } }
-        waitFor { fixture.statusReads.get() == before + 2 }
+        waitFor { fixture.statusReads.get() == before + statusReadsPerCheck }
         SystemClock.sleep(400)
-        assertEquals(before + 2, fixture.statusReads.get())
+        assertEquals(before + statusReadsPerCheck, fixture.statusReads.get())
         assertEquals(2, fixture.mpdConnections.get())
         activity!!.onActivity { assertSame(original, it); it.lifecycle.removeObserver(observer) }
         fixture.assertReadOnly()
@@ -686,7 +688,10 @@ private class AudioFixture(private val mp3: ByteArray) : AutoCloseable {
                         check(statusGate?.await(5, TimeUnit.SECONDS) != false)
                         send("state: $state\nplaylist: 1\nplaylistlength: 1\nsong: 0\nsongid: 1\nelapsed: 0\nduration: 120\nOK\n")
                     }
-                    "currentsong", "playlistinfo" -> send("file: fixture.mp3\nTitle: $title\nArtist: $artist\nId: 1\nPos: 0\nduration: 120\nOK\n")
+                    "currentsong", "playlistinfo" -> {
+                        if (command.startsWith("playlistinfo")) check(command == "playlistinfo \"0:1\"")
+                        send("file: fixture.mp3\nTitle: $title\nArtist: $artist\nId: 1\nPos: 0\nduration: 120\nOK\n")
+                    }
                     "idle" -> {
                         idleSockets.addIfAbsent(socket)
                         idleSubscriptions.incrementAndGet()

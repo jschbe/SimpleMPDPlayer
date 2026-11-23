@@ -48,7 +48,7 @@ class BrowserUiTest {
     private fun browse(path: String, generation: Long) {
         if (generation != ui.value.browser.generation) return
         reads += path
-        ui.value = ui.value.copy(browser = ui.value.browser.copy(path = path, entries = listings.getValue(path), loaded = true, loading = false, error = null, hasPlaylists = path.isEmpty()))
+        ui.value = ui.value.copy(browser = ui.value.browser.copy(path = path, entries = listings.getValue(path), loaded = true, loading = false, error = null, listingLimited = false, hasPlaylists = path.isEmpty()))
     }
 
     private fun show() {
@@ -59,7 +59,7 @@ class BrowserUiTest {
                 ServersApp(
                     state = ui.value, onAdd = {}, onEdit = {}, onDismissEditor = {}, onSave = {}, onDelete = {}, onSelect = {},
                     onReconnect = {}, onReload = {}, onGrantNetworkAccess = {}, onAction = playerActions::add,
-                    onLoadBrowser = { if (!ui.value.browser.loaded) browse(ui.value.browser.path, ui.value.browser.generation) },
+                    onLoadBrowser = { if (!ui.value.browser.loaded && !ui.value.browser.listingLimited) browse(ui.value.browser.path, ui.value.browser.generation) },
                     onBrowse = ::browse, onEnqueue = { uri, replace, generation -> actions += Triple(uri, replace, generation) },
                 )
             }
@@ -145,6 +145,25 @@ class BrowserUiTest {
         compose.onNodeWithText("This folder is empty").assertIsDisplayed()
         compose.runOnIdle { ui.value = ui.value.copy(browser = ui.value.browser.copy(queueMessage = BrowserQueueMessage.REPLACE_PARTIAL)) }
         compose.onNodeWithText("The queue was cleared, but adding content failed or could not be confirmed. Some tracks may have been added.").assertIsDisplayed()
+    }
+
+    @Test fun oversizedFolderOffersUpAndRetryAfterRecovery() {
+        show()
+        compose.onNodeWithTag("browse_$folder").performClick()
+        compose.runOnIdle {
+            ui.value = ui.value.copy(connection = ConnectionState(ConnectionStatus.FAILED, recovering = true),
+                browser = BrowserState(generation = 2, path = folder, listingLimited = true))
+        }
+        compose.onNodeWithText("This folder listing is too large to display.").assertIsDisplayed()
+        compose.onNodeWithText("Retry").assertIsNotEnabled()
+        compose.runOnIdle {
+            ui.value = ui.value.copy(connection = ConnectionState(ConnectionStatus.CONNECTED))
+        }
+        compose.onNodeWithText("Retry").performClick()
+        compose.onNodeWithText("A song").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Up one folder").performClick()
+        compose.onNodeWithText("Loose track").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(listOf("", folder, folder, ""), reads) }
     }
 
     @Test fun returningFromQueuePreservesBrowserScrollAndDoesNotReloadTheDirectory() {

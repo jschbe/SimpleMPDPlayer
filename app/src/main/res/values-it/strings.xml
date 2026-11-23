@@ -204,4 +204,10 @@
     <string name="app_license">GPL-3.0-or-later</string>
     <string name="source_repository_url">https://github.com/jschbe/SimpleMPDPlayer</string>
     <string name="duplicate_server_name">Esiste già un server con questo nome.</string>
+    <string name="queue_limit">Coda non disponibile. Il limite di caricamento è stato superato.</string>
+    <string name="queue_changing">La coda sta cambiando. Riprova a caricarla.</string>
+    <string name="queue_changed_action">La coda è cambiata. Controllala e riprova.</string>
+    <string name="clear_queue_unavailable_message">Impossibile visualizzare la coda. Rimuovere tutti i brani dalla coda MPD attiva?</string>
+    <string name="library_listing_limit">La cartella contiene troppi dati per essere visualizzata.</string>
+    <string name="mpd_response_limit">Una risposta di MPD ha superato il limite di caricamento.</string>
 </resources>

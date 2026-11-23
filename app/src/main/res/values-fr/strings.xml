@@ -204,4 +204,10 @@
     <string name="app_license">GPL-3.0-or-later</string>
     <string name="source_repository_url">https://github.com/jschbe/SimpleMPDPlayer</string>
     <string name="duplicate_server_name">Un serveur portant ce nom existe déjà.</string>
+    <string name="queue_limit">File indisponible. La limite de chargement a été dépassée.</string>
+    <string name="queue_changing">La file est en cours de modification. Réessayez de la charger.</string>
+    <string name="queue_changed_action">La file a changé. Vérifiez-la et réessayez.</string>
+    <string name="clear_queue_unavailable_message">La file ne peut pas être affichée. Supprimer tous les titres de la file MPD active ?</string>
+    <string name="library_listing_limit">Ce dossier contient trop de données pour être affiché.</string>
+    <string name="mpd_response_limit">Une réponse MPD a dépassé la limite de chargement.</string>
 </resources>

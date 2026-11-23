@@ -4,30 +4,39 @@ import java.io.Closeable
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-internal class FakeMpdServer(script: (Socket) -> Unit) : Closeable {
-    private val server = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
-    private val executor = Executors.newSingleThreadExecutor()
-    @Volatile private var accepted: Socket? = null
+internal class FakeMpdServer(scripts: List<(Socket) -> Unit>) : Closeable {
+    constructor(script: (Socket) -> Unit) : this(listOf(script))
+
+    private val server = ServerSocket(0, scripts.size, InetAddress.getLoopbackAddress())
+    private val executor = Executors.newFixedThreadPool(scripts.size + 1)
+    private val accepted = CopyOnWriteArrayList<Socket>()
     val host: String = requireNotNull(server.inetAddress.hostAddress)
     val port: Int = server.localPort
     private val result = executor.submit {
-        server.accept().use { socket ->
-            accepted = socket
-            socket.soTimeout = 3_000
-            script(socket)
+        val clients = scripts.map { script ->
+            val socket = server.accept()
+            accepted += socket
+            executor.submit {
+                socket.use {
+                    it.soTimeout = 4_000
+                    script(it)
+                }
+            }
         }
+        clients.forEach { it.get(5, TimeUnit.SECONDS) }
     }
 
-    fun await() { result.get(4, TimeUnit.SECONDS) }
+    fun await() { result.get(6, TimeUnit.SECONDS) }
 
     override fun close() {
         server.close()
-        accepted?.close()
+        accepted.forEach(Socket::close)
         executor.shutdownNow()
-        check(executor.awaitTermination(4, TimeUnit.SECONDS))
+        check(executor.awaitTermination(5, TimeUnit.SECONDS))
     }
 }
 

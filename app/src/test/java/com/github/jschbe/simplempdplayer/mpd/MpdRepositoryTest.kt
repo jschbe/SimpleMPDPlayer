@@ -102,15 +102,19 @@ class MpdRepositoryTest {
             PlayerAction.Volume(73) to ("setvol" to listOf("73")),
             PlayerAction.Seek(25.5, 11) to ("seekcur" to listOf("25.5")),
             PlayerAction.PlayId(12) to ("playid" to listOf("12")),
-            PlayerAction.DeleteId(12) to ("deleteid" to listOf("12")),
             PlayerAction.MoveId(11, 1) to ("moveid" to listOf("11", "1")),
-            PlayerAction.MoveId(12, -1) to ("moveid" to listOf("12", "0")),
+            PlayerAction.MoveId(11, -1) to ("moveid" to listOf("11", "0")),
+            PlayerAction.DeleteId(12) to ("deleteid" to listOf("12")),
             PlayerAction.Clear to ("clear" to emptyList()),
         )
         for ((action, expected) in actions) {
             server.calls.clear()
-            repository.perform(action)
+            repository.submit(action)
             runCurrent()
+            if (action is PlayerAction.MoveId) {
+                assertEquals("status", server.calls.first().first)
+                assertEquals("moveid", server.calls[1].first)
+            }
             assertTrue("Missing $expected", server.calls.contains(expected))
         }
         repository.close()
@@ -124,7 +128,7 @@ class MpdRepositoryTest {
         runCurrent()
         for (action in listOf(PlayerAction.Seek(30.0, 99), PlayerAction.Seek(Double.NaN, 11), PlayerAction.Volume(101), PlayerAction.MoveId(11, -1), PlayerAction.MoveId(99, 1))) {
             server.calls.clear()
-            repository.perform(action)
+            repository.submit(action)
             runCurrent()
             assertFalse(server.calls.any { it.first in listOf("seekcur", "setvol", "moveid") })
         }
@@ -289,18 +293,202 @@ class MpdRepositoryTest {
     }
 
     @Test
-    fun continuouslyChangingSnapshotFailsWithinBoundedRetries() = runTest {
-        val server = FakeServer()
-        server.statusBlock = { server.version++ }
+    fun largeQueueUsesExactRangesAndRetainsSongIdentityAndMetadata() = runTest {
+        val server = FakeServer().apply { ids += (13L..1_513L); selectedId = 311 }
         val repository = MpdRepository(backgroundScope, server::connection)
-        repository.connect(first)
-        runCurrent()
-        assertEquals(ConnectionStatus.FAILED, repository.state.value.status)
-        assertEquals(ConnectionError.INVALID_RESPONSE, repository.state.value.error)
-        assertEquals(3, server.calls.count { it.first == "playlistinfo" })
-        assertTrue(server.connections.all { it.closed })
+        repository.connect(first); runCurrent()
+        val snapshot = repository.state.value.snapshot!!
+        assertEquals(QueueAvailability.COMPLETE, snapshot.queueAvailability)
+        assertEquals(server.ids, snapshot.queue.map { it.id })
+        assertEquals(311L, snapshot.currentSong!!.id)
+        assertEquals(listOf("same.mp3"), snapshot.queue.map { it.song.file }.distinct())
+        assertEquals("Song 211", snapshot.queue[200].song.title)
+        assertEquals(listOf("Artist", "Guest"), snapshot.queue.last().song.artists)
+        assertTrue(snapshot.queue.size * server.song(11).size > 10_000)
+        assertEquals((0..1_400 step 200).map { "$it:${minOf(it + 200, 1_503)}" }, server.ranges())
         repository.close()
     }
+
+    @Test
+    fun queueOverEntryLimitKeepsPlaybackAndClearAcrossReconnect() = runTest {
+        val server = FakeServer().apply { ids += (13L..20_011L) }
+        val repository = MpdRepository(backgroundScope, server::connection)
+        repository.connect(first); runCurrent()
+        assertEquals(ConnectionStatus.CONNECTED, repository.state.value.status)
+        assertEquals(QueueAvailability.LIMIT, repository.state.value.snapshot!!.queueAvailability)
+        assertTrue(repository.state.value.snapshot!!.hasQueuedSongs)
+        assertTrue(server.ranges().isEmpty())
+        repository.reconnect(); runCurrent()
+        assertEquals(QueueAvailability.LIMIT, repository.state.value.snapshot!!.queueAvailability)
+        repository.perform(PlayerAction.PlayPause); runCurrent()
+        assertTrue(server.calls.contains("pause" to listOf("1")))
+        repository.submit(PlayerAction.MoveId(11, 1)); runCurrent()
+        assertFalse(server.calls.any { it.first == "moveid" })
+        repository.submit(PlayerAction.Clear); runCurrent()
+        assertEquals(1, server.calls.count { it.first == "clear" })
+        assertEquals(QueueAvailability.COMPLETE, repository.state.value.snapshot!!.queueAvailability)
+        assertFalse(repository.state.value.snapshot!!.hasQueuedSongs)
+        assertTrue(server.ranges().isEmpty())
+        repository.close()
+    }
+
+    @Test
+    fun metadataBudgetAcrossValidRangesKeepsTheConnectionUsable() = runTest {
+        val server = FakeServer().apply {
+            ids += (13L..2_413L)
+            extraTag = listOf("Comment" to "x".repeat(4_500))
+        }
+        val repository = MpdRepository(backgroundScope, server::connection)
+        repository.connect(first); runCurrent()
+        val snapshot = repository.state.value.snapshot!!
+        assertEquals(ConnectionStatus.CONNECTED, repository.state.value.status)
+        assertEquals(QueueAvailability.LIMIT, snapshot.queueAvailability)
+        assertTrue(snapshot.hasQueuedSongs)
+        assertTrue(snapshot.queue.isEmpty())
+        assertEquals((0..1_800 step 200).map { "$it:${it + 200}" }, server.ranges())
+        assertTrue(server.connections.none { it.closed })
+        repository.submit(PlayerAction.Clear); runCurrent()
+        assertEquals(QueueAvailability.COMPLETE, repository.state.value.snapshot!!.queueAvailability)
+        repository.close()
+    }
+
+    @Test
+    fun repeatedEditsBetweenBatchesNeverPublishAMixedQueueAndRetryCanRecover() = runTest {
+        val server = FakeServer().apply { ids += (13L..460L) }
+        server.rangeBlock = { start ->
+            if (start == 200) {
+                server.ids[0] = 5_000L + server.version
+                server.selectedId = server.ids[0]
+                server.version++
+            }
+        }
+        val repository = MpdRepository(backgroundScope, server::connection)
+        repository.connect(first); runCurrent()
+        assertEquals(ConnectionStatus.CONNECTED, repository.state.value.status)
+        assertNull(repository.state.value.error)
+        assertEquals(QueueAvailability.CHANGING, repository.state.value.snapshot!!.queueAvailability)
+        assertTrue(repository.state.value.snapshot!!.queue.isEmpty())
+        assertEquals(server.selectedId, repository.state.value.snapshot!!.currentSong!!.id)
+        assertEquals(List(3) { listOf("0:200", "200:400") }.flatten(), server.ranges())
+        assertTrue(server.connections.none { it.closed })
+        server.rangeBlock = {}
+        repository.retryQueue(repository.state.value.sessionId!!); runCurrent()
+        assertEquals(QueueAvailability.COMPLETE, repository.state.value.snapshot!!.queueAvailability)
+        assertEquals(server.ids, repository.state.value.snapshot!!.queue.map { it.id })
+        repository.close()
+    }
+
+    @Test
+    fun shrinkingQueueCanRejectAnOldRangeAndStillSynchronize() = runTest {
+        val server = FakeServer().apply { ids += (13L..460L) }
+        server.rangeBlock = { start ->
+            if (start == 200) {
+                server.ids.subList(2, server.ids.size).clear()
+                server.version++
+            }
+        }
+        val repository = MpdRepository(backgroundScope, server::connection)
+        repository.connect(first); runCurrent()
+        assertEquals(listOf("0:200", "200:400", "0:2"), server.ranges())
+        assertEquals(QueueAvailability.COMPLETE, repository.state.value.snapshot!!.queueAvailability)
+        assertEquals(server.ids, repository.state.value.snapshot!!.queue.map { it.id })
+        repository.close()
+    }
+
+    @Test
+    fun malformedPositionsOrDuplicateIdsAcrossRangesStillFailTheProtocol() = runTest {
+        val duplicate = FakeServer().apply { ids += (13L..212L); ids[200] = 11 }
+        val badPosition = FakeServer().apply { positionOffset = 1 }
+        for (server in listOf(duplicate, badPosition)) {
+            val repository = MpdRepository(backgroundScope, server::connection)
+            repository.connect(first); runCurrent()
+            assertEquals(ConnectionStatus.FAILED, repository.state.value.status)
+            assertEquals(ConnectionError.INVALID_RESPONSE, repository.state.value.error)
+            assertFalse(repository.state.value.recovering)
+            repository.close()
+        }
+    }
+
+    @Test
+    fun switchingDuringARangeReadDiscardsTheOldQueue() = runTest {
+        val release = CompletableDeferred<Unit>()
+        val old = FakeServer().apply {
+            ids += (13L..460L)
+            rangeBlock = { if (it == 200) withContext(NonCancellable) { release.await() } }
+        }
+        val next = FakeServer().apply { ids.clear(); ids.add(11); selectedId = 11 }
+        var creations = 0
+        val repository = MpdRepository(backgroundScope, { if (creations++ < 2) old.connection() else next.connection() })
+        repository.connect(first); runCurrent()
+        assertEquals(listOf("0:200", "200:400"), old.ranges())
+        repository.connect(second); runCurrent()
+        release.complete(Unit); runCurrent()
+        assertEquals(listOf(11L), repository.state.value.snapshot!!.queue.map { it.id })
+        assertEquals(listOf("0:1"), next.ranges())
+        assertTrue(old.connections.all { it.closed })
+        repository.close()
+    }
+
+    @Test
+    fun delayedQueueActionsAreRejectedAfterSameProfileRecoveryEditAndSwitch() = runTest {
+        val server = FakeServer()
+        val repository = MpdRepository(backgroundScope, server::connection)
+        repository.connect(first); runCurrent()
+        val reconnects: List<() -> Unit> = listOf(
+            {
+                server.pingError = EOFException()
+                repository.checkConnection(); runCurrent()
+                server.pingError = null
+                advanceTimeBy(1_000)
+            },
+            { repository.reconnect() },
+            { repository.connect(first.copy(mpdPort = first.mpdPort + 1)) },
+            { repository.connect(second) },
+        )
+        for (reconnect in reconnects) {
+            val obsolete = repository.context()
+            server.version++
+            reconnect(); runCurrent()
+            assertEquals(ConnectionStatus.CONNECTED, repository.state.value.status)
+            assertNotEquals(obsolete.sessionId, repository.context().sessionId)
+            assertNull(repository.performQueue(PlayerAction.Clear, obsolete))
+            assertNull(repository.performQueue(PlayerAction.DeleteId(11), obsolete))
+            assertNull(repository.performQueue(PlayerAction.PlayId(11), obsolete))
+            assertNull(repository.performQueue(PlayerAction.MoveId(11, 1), obsolete))
+            assertFalse(server.calls.any { it.first in listOf("clear", "deleteid", "playid", "moveid") })
+        }
+        assertNull(repository.perform(PlayerAction.Clear))
+        repository.submit(PlayerAction.Clear); runCurrent()
+        assertEquals(1, server.calls.count { it.first == "clear" })
+        repository.close()
+    }
+
+    @Test
+    fun clearAndMoveCheckTheQueueVersionBeforeSending() = runTest {
+        val server = FakeServer()
+        val repository = MpdRepository(backgroundScope, server::connection)
+        repository.connect(first); runCurrent()
+        for (action in listOf(PlayerAction.Clear, PlayerAction.MoveId(12, 1))) {
+            val context = repository.context()
+            server.ids.reverse()
+            server.version++
+            repository.performQueue(action, context); runCurrent()
+            assertEquals(ConnectionError.QUEUE_CHANGED, repository.state.value.commandError)
+            assertEquals(server.ids, repository.state.value.snapshot!!.queue.map { it.id })
+        }
+        assertFalse(server.calls.any { it.first in listOf("clear", "moveid") })
+        repository.close()
+    }
+
+    private fun MpdRepository.context(): QueueActionContext {
+        val state = state.value
+        val snapshot = state.snapshot!!
+        return QueueActionContext(state.sessionId!!,
+            snapshot.status.queueVersion.takeIf { snapshot.queueAvailability == QueueAvailability.COMPLETE })
+    }
+
+    private fun MpdRepository.submit(action: PlayerAction) =
+        if (action is PlayerAction.QueueAction) performQueue(action, context()) else perform(action)
 
     @Test
     fun transportAndProtocolFailuresStayDistinct() = runTest {
@@ -600,7 +788,12 @@ class MpdRepositoryTest {
         var statusBlock: suspend () -> Unit = {}
         var commandBlock: suspend (String) -> Unit = {}
         fun connection(): MpdConnection = FakeConnection(this).also { connections.add(it) }
-        fun song(id: Long) = listOf("file" to "same.mp3", "Id" to id.toString(), "Title" to "Song $id")
+        var rangeBlock: suspend (Int) -> Unit = {}
+        var positionOffset = 0
+        var extraTag = emptyList<Pair<String, String>>()
+        fun ranges() = calls.filter { it.first == "playlistinfo" }.map { it.second.single() }
+        fun song(id: Long) = listOf("file" to "same.mp3", "Id" to id.toString(), "Title" to "Song $id",
+            "Artist" to "Artist", "Artist" to "Guest", "Album" to "Album", "duration" to "180")
         suspend fun execute(name: String, arguments: List<String>): List<Pair<String, String>> {
             calls.add(name to arguments)
             commandBlock(name)
@@ -611,7 +804,22 @@ class MpdRepositoryTest {
                     listOf("state" to playback, "playlist" to version.toString(), "playlistlength" to ids.size.toString(), "volume" to "50", "elapsed" to "10", "duration" to "180", "random" to if (random) "1" else "0") + listOfNotNull(selectedId?.let { "songid" to it.toString() })
                 }
                 "currentsong" -> selectedId?.let(::song).orEmpty()
-                "playlistinfo" -> ids.flatMap(::song)
+                "playlistinfo" -> {
+                    val (start, end) = arguments.single().split(':').map(String::toInt)
+                    rangeBlock(start)
+                    if (start > ids.size) throw MpdAckException(2, 0, name)
+                    ids.subList(start, minOf(end, ids.size)).flatMapIndexed { index, id ->
+                        song(id) + ("Pos" to (start + index + positionOffset).toString()) + extraTag
+                    }
+                }
+                "clear" -> { ids.clear(); selectedId = null; playback = "stop"; version++; emptyList() }
+                "moveid" -> {
+                    ids.remove(arguments[0].toLong())
+                    ids.add(arguments[1].toInt(), arguments[0].toLong())
+                    version++
+                    emptyList()
+                }
+                "deleteid" -> { ids.remove(arguments.single().toLong()); version++; emptyList() }
                 else -> emptyList()
             }
         }

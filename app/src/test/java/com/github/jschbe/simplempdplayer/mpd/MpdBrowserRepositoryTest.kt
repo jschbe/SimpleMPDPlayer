@@ -113,6 +113,26 @@ class MpdBrowserRepositoryTest {
         repository.close()
     }
 
+    @Test fun acknowledgedAppendAndReplaceRemainSuccessfulWithBoundedReadback() = runTest {
+        for (replace in listOf(false, true)) {
+            val server = LibraryServer()
+            val repository = ready(server)
+            server.calls.clear()
+            server.before = { name, _ ->
+                if (name == "add") repeat(20_001) { server.queue += (100L + it) to "large.flac" }
+            }
+            repository.enqueue("Albums", replace, repository.browser.value.generation); runCurrent()
+            assertEquals(ConnectionStatus.CONNECTED, repository.state.value.status)
+            assertEquals(QueueAvailability.LIMIT, repository.state.value.snapshot!!.queueAvailability)
+            assertEquals(if (replace) BrowserQueueMessage.REPLACED else BrowserQueueMessage.APPENDED,
+                repository.browser.value.queueMessage)
+            assertEquals(1, server.calls.count { it.first == "add" })
+            assertEquals(if (replace) 1 else 0, server.calls.count { it.first == "clear" })
+            assertFalse(server.calls.any { it.first in listOf("play", "playid", "playlistinfo") })
+            repository.close()
+        }
+    }
+
     @Test fun rejectedAddAfterClearReportsPartialFailureRefreshesEmptyQueueAndDoesNotReplay() = runTest {
         val server = LibraryServer()
         val repository = ready(server)
@@ -287,7 +307,12 @@ class MpdBrowserRepositoryTest {
                 "lsinfo" -> listings.getValue(args.firstOrNull().orEmpty())
                 "status" -> listOf("state" to playback, "playlistlength" to queue.size.toString(), "playlist" to version.toString()) + listOfNotNull(selected?.let { "songid" to it.toString() })
                 "currentsong" -> queue.find { it.first == selected }?.let(::song).orEmpty()
-                "playlistinfo" -> queue.flatMap(::song)
+                "playlistinfo" -> {
+                    val (start, end) = args.single().split(':').map(String::toInt)
+                    queue.subList(start, minOf(end, queue.size)).flatMapIndexed { index, entry ->
+                        song(entry) + ("Pos" to (start + index).toString())
+                    }
+                }
                 "clear" -> { queue.clear(); selected = null; playback = "stop"; version++; emptyList() }
                 "add" -> { repeat(if (args.single() == "Albums") 2 else 1) { queue += nextId++ to args.single() }; version++; emptyList() }
                 else -> emptyList()

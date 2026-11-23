@@ -198,3 +198,9 @@ language_uk,Українська,Native language name in the app language select
 language_ru,Русский,Native language name in the app language selector. Keep this autonym unchanged in every catalog.
 app_license,GPL-3.0-or-later,Exact SPDX license identifier; retain GPL-3.0-or-later unchanged.
 source_repository_url,https://github.com/jschbe/SimpleMPDPlayer,"Public source repository URL; retain literally, selectable in About."
+queue_limit,Queue unavailable. It exceeds the loading limit.,Queue tab when queue data cannot fit the bounded load.
+queue_changing,Queue is changing. Try loading it again.,Queue tab after repeated changes during loading.
+queue_changed_action,The queue changed. Check it and try again.,A displayed queue changed before a checked action could run.
+clear_queue_unavailable_message,The queue could not be displayed. Remove all tracks from the active MPD queue?,Confirmation text when queue contents are unavailable.
+library_listing_limit,This folder listing is too large to display.,Library error for oversized directory responses. Up and Retry are available after reconnection.
+mpd_response_limit,An MPD response exceeded the loading limit.,Connection recovery after an incomplete oversized response.

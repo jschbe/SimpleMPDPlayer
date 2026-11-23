@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.jschbe.simplempdplayer.ServersUiState
@@ -26,9 +27,12 @@ class PlayerNavigationTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private val server = ServerInput("Test server", "localhost").toProfile()!!
     private val actions = mutableListOf<PlayerAction>()
+    private val queueContexts = mutableListOf<QueueActionContext>()
+    private val queueRetries = mutableListOf<Long>()
     private val timerEvents = mutableListOf<String>()
     private val snapshot = MpdSnapshot(
-        MpdStatus(playback = PlaybackState.PAUSED, songId = 1, elapsed = 10.0, duration = 100.0, volume = 50),
+        MpdStatus(playback = PlaybackState.PAUSED, songId = 1, elapsed = 10.0, duration = 100.0, volume = 50,
+            queueVersion = 1, queueLength = 20),
         MpdSong(1, "same.mp3", "Song 1"),
         (1L..20L).map { QueueEntry(it, MpdSong(it, "same.mp3", "Song $it", listOf("Artist"), duration = 100.0)) },
         0,
@@ -44,22 +48,25 @@ class PlayerNavigationTest {
         }
     }
 
-    private fun show(data: MpdSnapshot = snapshot, selected: Boolean = true) {
+    private fun show(data: MpdSnapshot = snapshot, selected: Boolean = true, restore: StateRestorationTester? = null) {
         ui.value = ServersUiState(
             settings = ServerSettings(listOf(server), if (selected) server.id else null),
             loading = false,
-            connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = data),
+            connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = data, sessionId = 1),
             positionSeconds = data.status.elapsed,
         )
-        compose.setContent {
+        val content: @androidx.compose.runtime.Composable () -> Unit = {
             SimpleMPDPlayerTheme {
                 ServersApp(
                     state = ui.value, onAdd = {}, onEdit = {}, onDismissEditor = {}, onSave = {}, onDelete = {},
                     onSelect = {}, onReconnect = {}, onReload = {}, onGrantNetworkAccess = {}, onAction = { actions.add(it) },
+                    onQueueAction = { action, context -> actions.add(action); queueContexts.add(context) },
+                    onRetryQueue = { queueRetries.add(it) },
                     onSleepEnabled = { timerEvents.add("enabled=$it") }, onSleepMinutes = { timerEvents.add("minutes=$it") },
                 )
             }
         }
+        if (restore == null) compose.setContent(content) else restore.setContent(content)
     }
 
     @Test
@@ -108,6 +115,89 @@ class PlayerNavigationTest {
         compose.onNodeWithTag("queue_play_13").assertIsDisplayed()
         compose.onNodeWithTag("queue_play_13").performClick()
         compose.runOnIdle { assertEquals(PlayerAction.PlayId(13), actions.last()) }
+    }
+
+    @Test
+    fun queueConfirmationAndMenusDisappearAcrossRecoveryEndpointEditAndSwitch() {
+        show()
+        compose.onNodeWithTag("tab_2").performClick()
+        compose.onNodeWithText("Clear queue").performClick()
+        compose.onNodeWithText("Clear the queue?").assertIsDisplayed()
+
+        compose.runOnIdle {
+            ui.value = ui.value.copy(connection = ui.value.connection.copy(status = ConnectionStatus.FAILED, sessionId = null))
+        }
+        compose.onNodeWithText("Clear the queue?").assertDoesNotExist()
+        val newQueue = snapshot.copy(queue = snapshot.queue.reversed())
+        compose.runOnIdle {
+            ui.value = ui.value.copy(connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = newQueue, sessionId = 2))
+        }
+        compose.onNodeWithText("Clear the queue?").assertDoesNotExist()
+        compose.onNodeWithTag("queue_list").performScrollToIndex(0)
+        compose.onNodeWithTag("queue_actions_20").performClick()
+        compose.onNodeWithText("Remove").assertIsDisplayed()
+
+        val edited = server.copy(mpdPort = server.mpdPort + 1)
+        compose.runOnIdle {
+            ui.value = ui.value.copy(settings = ServerSettings(listOf(edited), edited.id),
+                connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = snapshot, sessionId = 3))
+        }
+        compose.onNodeWithText("Remove").assertDoesNotExist()
+        compose.onNodeWithText("Clear queue").performClick()
+
+        val another = ServerInput("Another fixture", "localhost").toProfile()!!
+        compose.runOnIdle {
+            ui.value = ui.value.copy(settings = ServerSettings(listOf(edited, another), another.id),
+                connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = snapshot, sessionId = 4))
+        }
+        compose.onNodeWithText("Clear the queue?").assertDoesNotExist()
+        compose.runOnIdle { assertTrue(actions.isEmpty()) }
+        compose.onNodeWithText("Clear queue").performClick()
+        compose.onAllNodesWithText("Clear queue").filterToOne(hasAnyAncestor(isDialog())).performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(PlayerAction.Clear), actions)
+            assertEquals(listOf(QueueActionContext(4, 1)), queueContexts)
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun commandPendingKeepsCurrentDialogAndStateRestorationKeepsScrollOnly() {
+        val restoration = StateRestorationTester(compose)
+        show(restore = restoration)
+        compose.onNodeWithTag("tab_2").performClick()
+        compose.onNodeWithTag("queue_list").performScrollToIndex(12)
+        compose.onNodeWithText("Clear queue").performClick()
+        compose.runOnIdle {
+            ui.value = ui.value.copy(connection = ui.value.connection.copy(commandPending = true,
+                snapshot = snapshot.copy(status = snapshot.status.copy(elapsed = 20.0))))
+        }
+        compose.onNodeWithText("Clear the queue?").assertIsDisplayed()
+        compose.onAllNodesWithText("Clear queue").filterToOne(hasAnyAncestor(isDialog())).assertIsNotEnabled()
+        compose.runOnIdle { ui.value = ui.value.copy(connection = ui.value.connection.copy(commandPending = false)) }
+        compose.onNodeWithText("Clear the queue?").assertIsDisplayed()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText("Clear the queue?").assertDoesNotExist()
+        compose.onNodeWithTag("queue_play_13").assertIsDisplayed()
+        compose.runOnIdle { assertTrue(actions.isEmpty()) }
+    }
+
+    @Test
+    fun unavailableQueueKeepsPlayerControlsAndOffersRetryAndExplicitClear() {
+        show(snapshot.copy(queue = emptyList(), queueAvailability = QueueAvailability.LIMIT))
+        compose.onNodeWithContentDescription("Play").assertIsEnabled()
+        compose.onNodeWithTag("tab_2").performClick()
+        compose.onNodeWithText("Queue unavailable. It exceeds the loading limit.").assertIsDisplayed()
+        compose.onNodeWithText("The queue is empty").assertDoesNotExist()
+        compose.onNodeWithText("Retry").performClick()
+        compose.onNodeWithText("Clear queue").performClick()
+        compose.onNodeWithText("The queue could not be displayed. Remove all tracks from the active MPD queue?").assertIsDisplayed()
+        compose.onAllNodesWithText("Clear queue").filterToOne(hasAnyAncestor(isDialog())).performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(1L), queueRetries)
+            assertEquals(listOf(PlayerAction.Clear), actions)
+            assertEquals(listOf(QueueActionContext(1)), queueContexts)
+        }
     }
 
     @Test

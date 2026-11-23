@@ -4,6 +4,9 @@ import java.io.IOException
 
 class InvalidMpdResponse : IOException("Invalid MPD response")
 
+/** Reading stopped before the response terminator. The client closes the socket. */
+internal class MpdResponseLimit : IOException("MPD response exceeds the read budget")
+
 class MpdAckException(
     val code: Int,
     val commandIndex: Int,

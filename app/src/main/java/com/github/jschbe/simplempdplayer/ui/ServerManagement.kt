@@ -246,6 +246,8 @@ internal fun ConnectionError.label(): Int = when (this) {
     ConnectionError.UNREACHABLE -> R.string.host_not_reachable
     ConnectionError.TIMEOUT -> R.string.connection_timed_out
     ConnectionError.INVALID_RESPONSE -> R.string.invalid_mpd_response
+    ConnectionError.RESPONSE_LIMIT -> R.string.mpd_response_limit
+    ConnectionError.QUEUE_CHANGED -> R.string.queue_changed_action
     ConnectionError.LOST -> R.string.connection_lost
     ConnectionError.MPD_REJECTED -> R.string.mpd_rejected
     ConnectionError.NETWORK -> R.string.network_error
