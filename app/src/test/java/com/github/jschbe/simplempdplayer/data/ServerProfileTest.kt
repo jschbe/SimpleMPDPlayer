@@ -4,6 +4,36 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ServerProfileTest {
+    @Test fun duplicateNamesIgnoreCaseAndSurroundingWhitespace() {
+        val servers = listOf(ServerInput("Living room", "localhost").toProfile()!!)
+        for (name in listOf("Living room", "living ROOM", "  Living room  ", "\u2003LIVING ROOM\u2003")) {
+            assertTrue(name, servers.hasDuplicateName(name))
+            assertTrue(name, servers.map { it.copy(name = "  Living room  ") }.hasDuplicateName(name))
+        }
+        assertFalse(servers.hasDuplicateName("Livingroom"))
+        assertFalse(emptyList<ServerProfile>().hasDuplicateName("Living room"))
+        assertTrue(listOf(servers.single().copy(name = "Кімната")).hasDuplicateName("КІМНАТА"))
+    }
+
+    @Test fun editingExcludesOnlyTheStableProfileId() {
+        val first = ServerInput("First", "localhost").toProfile()!!
+        val second = ServerInput("Second", "localhost").toProfile()!!
+        val servers = listOf(first, second)
+        assertFalse(servers.hasDuplicateName(" FIRST ", first.id))
+        assertTrue(servers.hasDuplicateName(" second ", first.id))
+        assertTrue(servers.hasDuplicateName("first", second.id))
+        assertFalse(servers.hasDuplicateName("New name", first.id))
+    }
+
+    @Test fun existingDuplicatesStillConflictAfterExcludingEditedProfile() {
+        val first = ServerInput("First", "localhost").toProfile()!!
+        val duplicate = ServerInput("FIRST", "localhost").toProfile()!!
+        val servers = listOf(first, duplicate)
+        assertTrue(servers.hasDuplicateName(first.name, first.id))
+        assertTrue(servers.hasDuplicateName(duplicate.name, duplicate.id))
+        assertFalse(servers.hasDuplicateName("Unique", duplicate.id))
+    }
+
     @Test
     fun defaultsAndStableId() {
         val profile = ServerInput(" Test ", " localhost ").toProfile()!!

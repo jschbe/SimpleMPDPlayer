@@ -43,6 +43,7 @@ class ServerSettingsStore(private val dataStore: DataStore<Preferences>) {
     private suspend fun saveProfile(server: ServerProfile, activate: Boolean) {
         require(server.isValid())
         change { current ->
+            if (current.servers.hasDuplicateName(server.name, server.id)) throw DuplicateServerNameException()
             val servers = current.servers.toMutableList()
             val index = servers.indexOfFirst { it.id == server.id }
             if (index >= 0) servers[index] = server else servers.add(server)

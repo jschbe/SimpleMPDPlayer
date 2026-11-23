@@ -7,6 +7,7 @@ import com.github.jschbe.simplempdplayer.audio.StreamState
 import com.github.jschbe.simplempdplayer.timer.SleepTimerController
 import com.github.jschbe.simplempdplayer.timer.SleepTimerState
 import com.github.jschbe.simplempdplayer.data.ServerProfile
+import com.github.jschbe.simplempdplayer.data.DuplicateServerNameException
 import com.github.jschbe.simplempdplayer.data.ServerSettings
 import com.github.jschbe.simplempdplayer.data.ServerSettingsStore
 import com.github.jschbe.simplempdplayer.data.ThemeMode
@@ -60,6 +61,7 @@ class ServersViewModel(
     val notices = mutableNotices.asSharedFlow()
     private var settingsJob: Job? = null
     private var testJob: Job? = null
+    private var foregroundCheckJob: Job? = null
     private var networkAllowed = networkPermission()
     private var desiredEndpoint = repository.activeServer?.endpoint()
     private var writingSettings = false
@@ -209,6 +211,9 @@ class ServersViewModel(
                     // The observer is suppressed during this atomic write, including same-endpoint edits.
                     connect(afterSave, notifyToken = token)
                 }
+            } catch (_: DuplicateServerNameException) {
+                // Refresh the editor's name validation if another write won the race to save.
+                applySettings(store.settings.first())
             } catch (_: IOException) {
                 mutableState.update { it.copy(saveFailed = true) }
             } finally {
@@ -220,6 +225,7 @@ class ServersViewModel(
     }
 
     fun reconnect() {
+        foregroundCheckJob?.cancel()
         invalidateNotices()
         if (repository.activeServer == mutableState.value.activeServer && networkPermission()) repository.reconnect()
         else connect(mutableState.value.activeServer)
@@ -228,7 +234,21 @@ class ServersViewModel(
     fun onForeground() {
         refreshNetworkPermission()
         refreshSleepTimer()
-        repository.checkConnection()
+        requestConnectionCheck(ConnectionCheckTrigger.FOREGROUND)
+    }
+
+    fun onWindowFocusGained() = requestConnectionCheck(ConnectionCheckTrigger.WINDOW_FOCUS)
+
+    private fun requestConnectionCheck(trigger: ConnectionCheckTrigger) {
+        if (foregroundCheckJob?.isActive == true) return
+        val endpoint = mutableState.value.activeServer?.endpoint() ?: repository.activeServer?.endpoint() ?: return
+        foregroundCheckJob = viewModelScope.launch {
+            // Merge resume/unlock/focus bursts, including checks that would otherwise finish quickly.
+            delay(300)
+            val current = state.first { !it.loading }
+            if (!current.saving && current.activeServer?.endpoint() == endpoint &&
+                repository.activeServer?.endpoint() == endpoint) repository.checkConnection(trigger)
+        }
     }
 
     fun setSleepEnabled(enabled: Boolean) { viewModelScope.launch { sleepTimer?.setEnabled(enabled) } }
@@ -256,6 +276,7 @@ class ServersViewModel(
     }
 
     private fun connect(server: ServerProfile?, notifyToken: Long? = null) {
+        foregroundCheckJob?.cancel()
         localStream?.disable()
         desiredEndpoint = server?.endpoint()
         pendingConnectionNotice = notifyToken

@@ -1,4 +1,5 @@
 key,english,context
+duplicate_server_name,A server with this name already exists.,"Profile-name validation for Add/Edit: case-insensitive comparison after trimming; exclude the edited profile ID. No arguments. Display: Inline wrapping name-field error."
 app_name,SimpleMPDPlayer,Product/launcher name; keep the SimpleMPDPlayer brand unchanged. Also the application and activity label in Android settings. Source: AndroidManifest.xml:19; AndroidManifest.xml:36. Arguments/plurals: None; no quantity-dependent wording. Display: System/notification surface chooses truncation; no app character limit.
 queue,Queue,"Main tab for the current server's playback queue; not a saved playlist. Source: ServersApp.kt:169. Arguments/plurals: None; no quantity-dependent wording. Display: Compact button, menu, tab or label; no fixed character limit; review width and large text."
 browser,Browser,"Main tab for browsing the MPD music library; not an Internet browser. Source: ServersApp.kt:169. Arguments/plurals: None; no quantity-dependent wording. Display: Compact button, menu, tab or label; no fixed character limit; review width and large text."

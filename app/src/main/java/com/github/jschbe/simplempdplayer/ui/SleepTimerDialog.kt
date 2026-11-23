@@ -14,10 +14,11 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.github.jschbe.simplempdplayer.R
 import com.github.jschbe.simplempdplayer.timer.*
@@ -126,9 +127,9 @@ internal fun SleepRemaining(state: SleepTimerState, modifier: Modifier = Modifie
         compact && !state.enabled -> stringResource(R.string.timer_compact_off)
         else -> stringResource(timerStatusText(state))
     }
-    Text(text, modifier.testTag(if (state.active) "timer_remaining" else "timer_status"),
-        style = if (compact) MaterialTheme.typography.bodySmall else LocalTextStyle.current,
-        maxLines = if (compact) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis,
+    Text(text, modifier.testTag(if (state.active) "timer_remaining" else "timer_status")
+        .semantics { if (compact) stateDescription = text },
+        style = if (compact) MaterialTheme.typography.bodyLarge else LocalTextStyle.current,
         textAlign = if (compact) TextAlign.End else TextAlign.Start)
 }
 

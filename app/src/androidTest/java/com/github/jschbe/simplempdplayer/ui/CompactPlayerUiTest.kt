@@ -6,8 +6,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.Density
@@ -27,6 +32,7 @@ class CompactPlayerUiTest {
     private val song = MpdSong(1, "fallback.mp3", "Fixture title", listOf("Fixture artist"), listOf("Fixture album"))
     private val actions = mutableListOf<PlayerAction>()
     private val listening = mutableListOf<Boolean>()
+    private var timerOpens = 0
     private val state = mutableStateOf(ServersUiState(loading = false,
         settings = ServerSettings(listOf(server), server.id),
         connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = MpdSnapshot(
@@ -34,20 +40,111 @@ class CompactPlayerUiTest {
         sleepTimer = SleepTimerState(settings = TimerSettings(record = TimerRecord(
             "00000000-0000-0000-0000-000000000001", server, 1, 1, null, TimerStatus.WAITING)), loading = false)))
 
-    private fun show(fontScale: Float = 1f, width: Int = 360) {
+    private fun show(fontScale: Float = 1f, width: Int = 360, controlsEnabled: Boolean = true) {
         compose.activityRule.scenario.onActivity { it.setShowWhenLocked(true); it.setTurnScreenOn(true) }
         compose.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
                 SimpleMPDPlayerTheme {
                     Box(Modifier.width(width.dp)) {
-                        PlayerScreen(state.value, true, actions::add, listening::add, onTrackInfoExpanded = {
+                        PlayerScreen(state.value, controlsEnabled, actions::add, listening::add, onTrackInfoExpanded = {
                             state.value = state.value.copy(settings = state.value.settings.copy(trackInfoExpanded = it))
-                        })
+                        }, onOpenSleepTimer = { timerOpens++ })
                     }
                 }
             }
         }
+    }
+
+    private fun layout(tag: String): TextLayoutResult {
+        val results = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag(tag, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        return results.single()
+    }
+
+    private fun assertMatchingStatusStyles(timerTag: String = "timer_status") {
+        val mpd = layout("mpd_playback_status")
+        val timer = layout(timerTag)
+        val mpdStyle = mpd.layoutInput.style
+        val timerStyle = timer.layoutInput.style
+        assertEquals(mpdStyle.fontSize, timerStyle.fontSize)
+        assertEquals(mpdStyle.fontWeight, timerStyle.fontWeight)
+        assertEquals(mpdStyle.fontFamily, timerStyle.fontFamily)
+        assertEquals(mpdStyle.fontStyle, timerStyle.fontStyle)
+        assertEquals(mpdStyle.lineHeight, timerStyle.lineHeight)
+        assertEquals(mpdStyle.letterSpacing, timerStyle.letterSpacing)
+        assertEquals(mpdStyle.color, timerStyle.color)
+        assertEquals(TextAlign.Start, mpdStyle.textAlign)
+        assertEquals(TextAlign.End, timerStyle.textAlign)
+        assertFalse(mpd.hasVisualOverflow)
+        assertFalse(timer.hasVisualOverflow)
+    }
+
+    @Test fun fullTimerStatusAreaIsAnAccessibleButtonEvenWhenPlaybackControlsAreDisabled() {
+        show(controlsEnabled = false)
+        compose.onNodeWithTag("sleep_compact_status").performScrollTo().assertHasClickAction()
+            .assertContentDescriptionEquals("Sleep timer")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Waiting for playback"))
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
+            .assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
+            .performTouchInput { click(Offset(width - 1f, 1f)) }
+        assertMatchingStatusStyles()
+        compose.runOnIdle {
+            assertEquals(1, timerOpens)
+            assertTrue(actions.isEmpty())
+            assertTrue(listening.isEmpty())
+        }
+    }
+
+    @Test fun timerStatusPressHasNoVisualFeedbackAndStillClicks() {
+        show()
+        val timer = compose.onNodeWithTag("sleep_compact_status").performScrollTo()
+        val before = timer.captureToImage()
+        val expected = IntArray(before.width * before.height).also { before.readPixels(it) }
+        timer.performTouchInput { down(center) }
+        try {
+            android.os.SystemClock.sleep(200) // Include the scroll container's delayed press interaction.
+            compose.mainClock.advanceTimeBy(200)
+            val pressed = timer.captureToImage()
+            assertEquals(before.width, pressed.width)
+            assertEquals(before.height, pressed.height)
+            assertArrayEquals(expected, IntArray(expected.size).also { pressed.readPixels(it) })
+        } finally { timer.performTouchInput { up() } }
+        compose.mainClock.advanceTimeBy(200)
+        val released = timer.captureToImage()
+        assertArrayEquals(expected, IntArray(expected.size).also { released.readPixels(it) })
+        compose.runOnIdle { assertEquals(1, timerOpens); assertTrue(actions.isEmpty()) }
+    }
+
+    @Test fun timerStatusUpdatesKeepMatchingStylesAndRemainClickableAtLargeFontSize() {
+        show(fontScale = 2f, width = 300)
+        val waiting = state.value.sleepTimer.settings.record!!
+        val active = waiting.copy(status = TimerStatus.ACTIVE, deadline = 120_001)
+        val cases = listOf(
+            SleepTimerState(loading = false) to "Sleep off",
+            SleepTimerState(settings = TimerSettings(record = waiting), loading = false) to "Waiting for playback",
+            SleepTimerState(settings = TimerSettings(record = active), remainingMillis = 120_000, loading = false) to "Sleep in 2 min",
+            SleepTimerState(settings = TimerSettings(record = active), remainingMillis = 60_000, loading = false) to "Sleep in 1 min",
+            SleepTimerState(settings = TimerSettings(record = active), remainingMillis = 0, loading = false) to "Due · Waiting for Android",
+            SleepTimerState(settings = TimerSettings(record = active.copy(status = TimerStatus.FAILED, error = TimerError.NETWORK)), loading = false) to "Sleep off",
+        )
+        for ((index, case) in cases.withIndex()) {
+            val (timer, text) = case
+            compose.runOnIdle { state.value = state.value.copy(sleepTimer = timer) }
+            compose.onNodeWithTag("sleep_compact_status").performScrollTo().assertTextContains(text)
+                .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, text)).performClick()
+            assertMatchingStatusStyles(if (timer.active) "timer_remaining" else "timer_status")
+            val mpd = compose.onNodeWithTag("mpd_playback_status").fetchSemanticsNode().boundsInRoot
+            val status = compose.onNodeWithTag("sleep_compact_status").fetchSemanticsNode().boundsInRoot
+            assertTrue(mpd.right <= status.left)
+            compose.runOnIdle {
+                assertEquals(index + 1, timerOpens)
+                assertEquals(timer, state.value.sleepTimer)
+                assertTrue(actions.isEmpty())
+            }
+        }
+        compose.onNodeWithText("Sleep timer needs attention. Open Settings → Sleep timer.").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun infoPopupDoesNotToggleListeningOrSendTransportActions() {
@@ -69,12 +166,15 @@ class CompactPlayerUiTest {
         assertTrue(kotlin.math.abs(mpd.center.y - timer.center.y) < 2f)
         compose.onNodeWithText("Paused").assertIsDisplayed()
         compose.onNodeWithText("Waiting for playback").assertIsDisplayed()
+        assertMatchingStatusStyles()
         compose.onNodeWithTag("playback_options").performScrollTo()
         val random = compose.onNodeWithTag("random_switch").fetchSemanticsNode().boundsInRoot
         val repeat = compose.onNodeWithTag("repeat_dropdown").fetchSemanticsNode().boundsInRoot
         val label = compose.onNodeWithTag("random_label").fetchSemanticsNode().boundsInRoot
+        val options = compose.onNodeWithTag("playback_options").fetchSemanticsNode().boundsInRoot
         assertTrue(label.right <= random.left)
         assertTrue(kotlin.math.abs(random.center.y - repeat.center.y) < 2f)
+        assertEquals(options.center.x, (label.left + repeat.right) / 2f, 1f)
         compose.onNodeWithTag("random_switch").performClick()
         compose.onNodeWithTag("repeat_dropdown").performClick()
         compose.onNodeWithTag("repeat_option_QUEUE").performClick()
@@ -109,6 +209,7 @@ class CompactPlayerUiTest {
         val status = compose.onNodeWithTag("mpd_playback_status").fetchSemanticsNode().boundsInRoot
         val timer = compose.onNodeWithTag("sleep_compact_status").fetchSemanticsNode().boundsInRoot
         assertTrue(status.right <= timer.left)
+        assertMatchingStatusStyles()
         compose.onNodeWithTag("repeat_dropdown").performScrollTo().assertIsDisplayed()
         val page = compose.onNodeWithTag("player_page").fetchSemanticsNode().boundsInRoot
         val repeat = compose.onNodeWithTag("repeat_dropdown").fetchSemanticsNode().boundsInRoot

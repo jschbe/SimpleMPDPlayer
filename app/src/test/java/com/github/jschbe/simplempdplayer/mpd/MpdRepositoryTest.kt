@@ -388,7 +388,8 @@ class MpdRepositoryTest {
 
     @Test fun recoveryUsesExactlyFiveExponentialDelaysThenRequiresManualRetry() = runTest {
         val server = FakeServer().apply { connectBlock = { throw ConnectException("refused") } }
-        val repository = MpdRepository(backgroundScope, server::connection)
+        val diagnostics = mutableListOf<String>()
+        val repository = MpdRepository(backgroundScope, server::connection, diagnostics = diagnostics::add)
         repository.connect(first); runCurrent()
         assertEquals(2, server.connections.size)
         for ((index, delay) in listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L).withIndex()) {
@@ -404,9 +405,13 @@ class MpdRepositoryTest {
         assertFalse(repository.state.value.recovering)
         val count = server.connections.size
         repository.checkConnection()
+        repository.checkConnection(ConnectionCheckTrigger.WINDOW_FOCUS)
         repository.networkChanged(false); repository.networkChanged(true)
         advanceTimeBy(60_000); runCurrent()
         assertEquals(count, server.connections.size)
+        assertTrue(diagnostics.any { "exhausted generation=" in it })
+        assertTrue(diagnostics.any { "trigger=WINDOW_FOCUS" in it && "exhausted=true" in it })
+        assertTrue(diagnostics.none { first.host in it || first.name in it || first.id in it })
         server.connectBlock = {}
         repository.reconnect(); runCurrent()
         assertEquals(ConnectionStatus.CONNECTED, repository.state.value.status)

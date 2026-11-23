@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import com.github.jschbe.simplempdplayer.R
 import com.github.jschbe.simplempdplayer.audio.StreamPhase
 import com.github.jschbe.simplempdplayer.audio.StreamError
@@ -30,7 +31,7 @@ import com.github.jschbe.simplempdplayer.mpd.RepeatMode
 import com.github.jschbe.simplempdplayer.mpd.SingleMode
 
 @Composable
-internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (PlayerAction) -> Unit, onLocalListening: (Boolean) -> Unit = {}, onTrackInfoExpanded: (Boolean) -> Unit = {}) {
+internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (PlayerAction) -> Unit, onLocalListening: (Boolean) -> Unit = {}, onTrackInfoExpanded: (Boolean) -> Unit = {}, onOpenSleepTimer: () -> Unit = {}) {
     val snapshot = state.connection.snapshot
     val status = snapshot?.status
     val song = snapshot?.currentSong
@@ -71,8 +72,14 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
                 PlaybackState.PAUSED -> R.string.paused
                 PlaybackState.STOPPED -> R.string.stopped
                 else -> R.string.playback_unknown
-            }), Modifier.weight(1f).testTag("mpd_playback_status"), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Box(Modifier.weight(1.5f).testTag("sleep_compact_status")) {
+            }), Modifier.weight(1f).testTag("mpd_playback_status"), style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Start)
+            val timerLabel = stringResource(R.string.sleep_timer)
+            Box(Modifier.weight(1.5f).heightIn(min = 48.dp).testTag("sleep_compact_status")
+                .semantics { contentDescription = timerLabel }
+                .clickable(interactionSource = null, indication = null,
+                    role = Role.Button, onClickLabel = timerLabel, onClick = onOpenSleepTimer),
+                contentAlignment = Alignment.CenterEnd) {
                 SleepRemaining(state.sleepTimer, Modifier.fillMaxWidth(), compact = true)
             }
         }
@@ -141,22 +148,26 @@ private fun PlaybackOptions(status: MpdStatus?, enabled: Boolean, onAction: (Pla
     var expanded by remember { mutableStateOf(false) }
     LaunchedEffect(enabled) { if (!enabled) expanded = false }
     FlowRow(Modifier.fillMaxWidth().testTag("playback_options"), maxItemsInEachRow = 2,
-        horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         val randomLabel = stringResource(R.string.random)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(randomLabel, Modifier.testTag("random_label"))
+        Row(Modifier.align(Alignment.CenterVertically), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(randomLabel, Modifier.testTag("random_label"), style = MaterialTheme.typography.bodyLarge)
             Switch(status?.random == true, { onAction(PlayerAction.Random(it)) }, enabled = enabled,
                 modifier = Modifier.testTag("random_switch").semantics { contentDescription = randomLabel })
         }
-        Box {
+        Box(Modifier.align(Alignment.CenterVertically)) {
             val modeLabel = stringResource(status?.repeatMode?.label() ?: when {
                 status?.single == SingleMode.ONESHOT -> R.string.repeat_oneshot
                 status?.repeat == false && status.single == SingleMode.ON -> R.string.repeat_stop_after_track
                 else -> R.string.repeat_unknown
             })
             TextButton(onClick = { expanded = true }, enabled = enabled,
+                colors = ButtonDefaults.textButtonColors(contentColor = LocalContentColor.current,
+                    disabledContentColor = LocalContentColor.current),
                 modifier = Modifier.width(IntrinsicSize.Max).testTag("repeat_dropdown").semantics { stateDescription = modeLabel }) {
-                Text(stringResource(R.string.repeat, modeLabel), Modifier.weight(1f, fill = false))
+                Text(stringResource(R.string.repeat, modeLabel), Modifier.weight(1f, fill = false),
+                    style = MaterialTheme.typography.bodyLarge)
                 Icon(painterResource(R.drawable.ic_expand), null, Modifier.size(18.dp))
             }
             DropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {

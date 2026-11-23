@@ -32,6 +32,7 @@ import com.github.jschbe.simplempdplayer.ServersUiState
 import com.github.jschbe.simplempdplayer.data.ProfileField
 import com.github.jschbe.simplempdplayer.data.ServerInput
 import com.github.jschbe.simplempdplayer.data.ServerProfile
+import com.github.jschbe.simplempdplayer.data.hasDuplicateName
 import com.github.jschbe.simplempdplayer.mpd.ConnectionError
 import com.github.jschbe.simplempdplayer.mpd.ConnectionStatus
 import kotlinx.coroutines.delay
@@ -143,6 +144,7 @@ internal fun ServerManagement(
 @Composable
 internal fun ServerEditorDialog(
     editor: ServerEditor,
+    servers: List<ServerProfile>,
     saving: Boolean,
     saveFailed: Boolean,
     onDismiss: () -> Unit,
@@ -157,13 +159,18 @@ internal fun ServerEditorDialog(
     var streamPort by rememberSaveable(server?.id) { mutableStateOf((server?.streamPort ?: 8000).toString()) }
     var submitted by rememberSaveable(server?.id) { mutableStateOf(false) }
     val input = ServerInput(name, host, mpdPort, streamPort)
-    val errors = if (submitted) input.errors() else emptySet()
+    val inputErrors = input.errors()
+    val errors = if (submitted) inputErrors else emptySet()
+    val duplicateName = servers.hasDuplicateName(name, server?.id)
+    val invalidName = ProfileField.NAME in inputErrors || duplicateName
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
         title = { Text(stringResource(if (server == null) R.string.add_server else R.string.edit_server)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ProfileTextField(name, { name = it }, R.string.server_name, ProfileField.NAME in errors, R.string.invalid_name, !busy)
+                ProfileTextField(name, { name = it }, R.string.server_name,
+                    ProfileField.NAME in errors || duplicateName,
+                    if (duplicateName) R.string.duplicate_server_name else R.string.invalid_name, !busy)
                 ProfileTextField(host, { host = it }, R.string.server_host, ProfileField.HOST in errors, R.string.invalid_host, !busy, placeholder = R.string.host_placeholder)
                 ProfileTextField(mpdPort, { mpdPort = it }, R.string.mpd_port, ProfileField.MPD_PORT in errors, R.string.invalid_port, !busy, true)
                 ProfileTextField(streamPort, { streamPort = it }, R.string.http_stream_port, ProfileField.STREAM_PORT in errors, R.string.invalid_port, !busy, true)
@@ -187,8 +194,8 @@ internal fun ServerEditorDialog(
                 TextButton(onClick = {
                     submitted = true
                     val profile = if (server == null) input.toProfile() else input.toProfile(server.id)
-                    profile?.let(onSave)
-                }, enabled = !busy) { Text(stringResource(R.string.save)) }
+                    if (!invalidName) profile?.let(onSave)
+                }, enabled = !busy && !invalidName) { Text(stringResource(R.string.save)) }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text(stringResource(R.string.cancel)) } },

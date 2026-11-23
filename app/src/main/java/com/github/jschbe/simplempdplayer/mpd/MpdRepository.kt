@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 
 enum class ConnectionStatus { DISCONNECTED, CONNECTING, CONNECTED, FAILED }
 enum class ConnectionFailureSource { CONNECT, CONTROL, IDLE }
+enum class ConnectionCheckTrigger { FOREGROUND, WINDOW_FOCUS, NETWORK }
 enum class ConnectionError { REFUSED, UNREACHABLE, TIMEOUT, INVALID_RESPONSE, LOST, MPD_REJECTED, NETWORK, PERMISSION_REQUIRED }
 
 data class ConnectionState(
@@ -49,6 +50,7 @@ class MpdRepository(
     private val connectionFactory: () -> MpdConnection = { MpdClient() },
     private val pingIntervalMillis: Long = 15_000,
     private val nanoTime: () -> Long = System::nanoTime,
+    private val diagnostics: (String) -> Unit = {},
 ) {
     private class Session(val command: MpdConnection, var events: MpdConnection?, val work: Job) {
         val operations = Mutex()
@@ -97,6 +99,7 @@ class MpdRepository(
         close()
         if (server == null) return
         activeServer = server
+        diagnostics("selected generation=$generation")
         if (!networkAllowed) {
             mutableState.value = ConnectionState(ConnectionStatus.FAILED, ConnectionError.PERMISSION_REQUIRED)
             return
@@ -194,6 +197,7 @@ class MpdRepository(
             retryAttempt = 0
             mutableState.update { it.copy(error = null, recovering = false, retryAttempt = 0,
                 retriesExhausted = false, waitingForNetwork = !networkAvailable.value, idleConnected = true) }
+            diagnostics("restored generation=$generation idle=true")
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: IOException) { fail(current, classify(error)) }
         catch (_: SecurityException) { fail(current, ConnectionError.PERMISSION_REQUIRED) }
@@ -201,6 +205,7 @@ class MpdRepository(
 
     private fun idleFailed(current: Session, events: MpdConnection, error: ConnectionError) {
         if (!isCurrent(current) || current.events !== events) return
+        diagnostics("failure generation=$generation source=IDLE category=$error attempt=$retryAttempt")
         events.close()
         current.events = null
         mutableState.update { it.copy(error = error, failureSource = ConnectionFailureSource.IDLE,
@@ -222,11 +227,13 @@ class MpdRepository(
                     delay(1_000L shl retryAttempt)
                     if (!networkAvailable.value) continue
                     retryAttempt++
+                    diagnostics("retry generation=$generation attempt=$retryAttempt idleOnly=${session?.let(::isCurrent) == true}")
                     mutableState.update { it.copy(retryAttempt = retryAttempt, waitingForNetwork = false) }
                     val current = session
                     if (current != null && isCurrent(current)) openIdle(current) else openControl(token)
                 }
                 if (token == generation && state.value.recovering && retryAttempt == 5) {
+                    diagnostics("exhausted generation=$generation attempt=$retryAttempt")
                     mutableState.update { it.copy(recovering = false, retriesExhausted = true, waitingForNetwork = !networkAvailable.value) }
                 }
             } finally {
@@ -240,11 +247,13 @@ class MpdRepository(
         val changed = networkAvailable.value != available
         networkAvailable.value = available
         mutableState.update { it.copy(waitingForNetwork = activeServer != null && !available) }
-        if (changed && available) checkConnection()
+        if (changed && available) checkConnection(ConnectionCheckTrigger.NETWORK)
     }
 
     /** One foreground/network-return health check, serialized with commands and other checks. */
-    fun checkConnection() {
+    fun checkConnection(trigger: ConnectionCheckTrigger = ConnectionCheckTrigger.FOREGROUND) {
+        if (activeServer != null) diagnostics("check generation=$generation trigger=$trigger status=${state.value.status} " +
+            "recovering=${state.value.recovering} exhausted=${state.value.retriesExhausted} offline=${!networkAvailable.value}")
         val current = session ?: return
         if (!isCurrent(current) || state.value.status != ConnectionStatus.CONNECTED ||
             !networkAvailable.value || current.healthCheck?.isActive == true) return
@@ -254,6 +263,7 @@ class MpdRepository(
                     if (!isCurrent(current)) return@withLock
                     current.command.ping()
                     refresh(current, forceQueue = true)
+                    if (isCurrent(current)) diagnostics("checked generation=$generation trigger=$trigger idle=${state.value.idleConnected}")
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: IOException) { fail(current, classify(error)) }
@@ -479,6 +489,7 @@ class MpdRepository(
 
     private fun fail(current: Session, error: ConnectionError, source: ConnectionFailureSource = ConnectionFailureSource.CONTROL) {
         if (!isCurrent(current)) return
+        diagnostics("failure generation=$generation source=$source category=$error attempt=$retryAttempt")
         current.close()
         mutableState.update { it.copy(status = ConnectionStatus.FAILED, error = error, commandPending = false,
             failureSource = source, idleConnected = false, recovering = retryable(error),

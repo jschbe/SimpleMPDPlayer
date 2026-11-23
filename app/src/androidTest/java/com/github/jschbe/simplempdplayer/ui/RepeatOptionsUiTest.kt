@@ -51,6 +51,28 @@ class RepeatOptionsUiTest {
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, label))
     }
 
+    private fun assertClosedStyleMatchesRandom() {
+        compose.onNodeWithTag("playback_options").performScrollTo()
+        val random = compose.onNodeWithTag("random_label", useUnmergedTree = true)
+        val repeat = compose.onNodeWithText("Repeat: None", useUnmergedTree = true)
+        fun layout(node: SemanticsNodeInteraction): TextLayoutResult {
+            val results = mutableListOf<TextLayoutResult>()
+            node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+            return results.single()
+        }
+        val randomLayout = layout(random)
+        val repeatLayout = layout(repeat)
+        val randomStyle = randomLayout.layoutInput.style
+        val repeatStyle = repeatLayout.layoutInput.style
+        assertEquals(randomStyle.fontSize, repeatStyle.fontSize)
+        assertEquals(randomStyle.fontWeight, repeatStyle.fontWeight)
+        assertEquals(randomStyle.color, repeatStyle.color)
+        val randomBaseline = random.fetchSemanticsNode().boundsInRoot.top + randomLayout.firstBaseline
+        val repeatBaseline = repeat.fetchSemanticsNode().boundsInRoot.top + repeatLayout.firstBaseline
+        assertEquals(randomBaseline, repeatBaseline, 1f)
+        assertFalse(repeatLayout.hasVisualOverflow)
+    }
+
     @Test fun allSelectionsKeepConfirmedDisplayUntilReadbackAndRandomIndependent() {
         show()
         for (random in listOf(false, true)) for (mode in RepeatMode.entries) {
@@ -102,6 +124,7 @@ class RepeatOptionsUiTest {
         compose.onNodeWithTag("repeat_dropdown").assertIsNotEnabled()
         compose.onNodeWithTag("random_switch").assertIsNotEnabled()
         assertMode("None")
+        assertClosedStyleMatchesRandom()
         compose.runOnIdle { assertTrue(actions.isEmpty()); enabled.value = true }
         compose.onNodeWithTag("repeat_option_QUEUE").assertDoesNotExist()
     }
@@ -111,6 +134,7 @@ class RepeatOptionsUiTest {
         for (mode in ThemeMode.entries) {
             compose.runOnIdle { theme.value = mode }
             assertMode("None")
+            assertClosedStyleMatchesRandom()
             compose.onNodeWithTag("repeat_dropdown").performClick()
             compose.onNodeWithTag("repeat_option_QUEUE").assertIsDisplayed().performClick()
             compose.runOnIdle { assertEquals(PlayerAction.Repeat(RepeatMode.QUEUE), actions.last()) }
@@ -130,6 +154,8 @@ class RepeatOptionsUiTest {
             compose.runOnIdle { status.value = value }
             assertMode(label)
             val dropdown = compose.onNodeWithTag("repeat_dropdown").fetchSemanticsNode().boundsInRoot
+            val options = compose.onNodeWithTag("playback_options").fetchSemanticsNode().boundsInRoot
+            assertEquals(options.center.x, dropdown.center.x, 1f)
             val page = compose.onNodeWithTag("player_page").fetchSemanticsNode().boundsInRoot
             assertTrue(dropdown.left >= page.left && dropdown.right <= page.right)
             val layouts = mutableListOf<TextLayoutResult>()
@@ -142,6 +168,8 @@ class RepeatOptionsUiTest {
             compose.onNodeWithTag("repeat_option_NONE").performClick()
             compose.onNodeWithTag("random_switch").performScrollTo().assertIsDisplayed()
             val random = compose.onNodeWithTag("random_switch").fetchSemanticsNode().boundsInRoot
+            val randomLabel = compose.onNodeWithTag("random_label").fetchSemanticsNode().boundsInRoot
+            assertEquals(options.center.x, (randomLabel.left + random.right) / 2f, 1f)
             assertTrue(dropdown.top > random.top)
         }
     }

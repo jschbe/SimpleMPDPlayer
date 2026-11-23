@@ -134,6 +134,45 @@ class ServerUiTest {
         compose.onNodeWithText("Second").assertIsDisplayed()
     }
 
+    @Test fun addAndEditRejectDuplicateNamesAndAllowOwnNameWithStableId() {
+        show(listOf(first, second))
+        compose.onNodeWithContentDescription("Add server").performClick()
+        compose.onNodeWithText("Save").assertIsNotEnabled()
+        compose.onNodeWithText("Name").performTextInput("  FIRST  ")
+        compose.onNodeWithText("A server with this name already exists.").assertIsDisplayed()
+        compose.onNodeWithText("Save").assertIsNotEnabled()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithTag("edit_server_${second.id}").performClick()
+        compose.onNodeWithText("Save").assertIsEnabled()
+        compose.onNodeWithText("Name").performTextReplacement(" first ")
+        compose.onNodeWithText("A server with this name already exists.").assertIsDisplayed()
+        compose.onNodeWithText("Save").assertIsNotEnabled()
+        compose.onNodeWithText("Name").performTextReplacement(" SECOND ")
+        compose.onNodeWithText("A server with this name already exists.").assertDoesNotExist()
+        compose.onNodeWithText("Save").assertIsEnabled().performClick()
+        compose.waitUntil(5_000) { model.state.value.editor == null }
+        compose.runOnIdle {
+            assertEquals(listOf(first, second.copy(name = "SECOND")), model.state.value.settings.servers)
+            assertEquals(second.id, model.state.value.settings.selectedId)
+            assertEquals(2, connections.size)
+        }
+    }
+
+    @Test fun legacyDuplicatesStayVisibleAndCanBeExplicitlyRenamed() {
+        val duplicate = second.copy(name = " first ")
+        show(listOf(first, duplicate))
+        compose.onNodeWithTag("edit_server_${duplicate.id}").performClick()
+        compose.onNodeWithText("A server with this name already exists.").assertIsDisplayed()
+        compose.onNodeWithText("Save").assertIsNotEnabled()
+        compose.onNodeWithText("Name").performTextReplacement("Unique")
+        compose.onNodeWithText("Save").assertIsEnabled().performClick()
+        compose.waitUntil(5_000) { model.state.value.editor == null }
+        compose.runOnIdle {
+            assertEquals(listOf(first, duplicate.copy(name = "Unique")), model.state.value.settings.servers)
+            assertEquals(duplicate.id, model.state.value.settings.selectedId)
+        }
+    }
+
     @Test fun onlyLongPressOnHandleReordersAndDropdownUsesStoredOrder() {
         show(listOf(first, second), first.id)
         servers()

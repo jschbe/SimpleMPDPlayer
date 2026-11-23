@@ -17,6 +17,12 @@ data class ServerProfile(
 
 enum class ProfileField { NAME, HOST, MPD_PORT, STREAM_PORT }
 
+/** Compare display names without changing stored names or treating an edit as a new profile. */
+fun List<ServerProfile>.hasDuplicateName(name: String, excludedId: String? = null): Boolean =
+    any { it.id != excludedId && it.name.trim().equals(name.trim(), ignoreCase = true) }
+
+internal class DuplicateServerNameException : IllegalArgumentException()
+
 data class ServerInput(
     val name: String = "",
     val host: String = "",

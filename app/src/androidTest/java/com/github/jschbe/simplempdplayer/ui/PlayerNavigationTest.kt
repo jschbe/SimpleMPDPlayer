@@ -12,6 +12,7 @@ import com.github.jschbe.simplempdplayer.ServersUiState
 import com.github.jschbe.simplempdplayer.data.ServerInput
 import com.github.jschbe.simplempdplayer.data.ServerSettings
 import com.github.jschbe.simplempdplayer.mpd.*
+import com.github.jschbe.simplempdplayer.timer.*
 import com.github.jschbe.simplempdplayer.ui.theme.SimpleMPDPlayerTheme
 import org.junit.Assert.*
 import org.junit.Before
@@ -25,6 +26,7 @@ class PlayerNavigationTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private val server = ServerInput("Test server", "localhost").toProfile()!!
     private val actions = mutableListOf<PlayerAction>()
+    private val timerEvents = mutableListOf<String>()
     private val snapshot = MpdSnapshot(
         MpdStatus(playback = PlaybackState.PAUSED, songId = 1, elapsed = 10.0, duration = 100.0, volume = 50),
         MpdSong(1, "same.mp3", "Song 1"),
@@ -54,6 +56,7 @@ class PlayerNavigationTest {
                 ServersApp(
                     state = ui.value, onAdd = {}, onEdit = {}, onDismissEditor = {}, onSave = {}, onDelete = {},
                     onSelect = {}, onReconnect = {}, onReload = {}, onGrantNetworkAccess = {}, onAction = { actions.add(it) },
+                    onSleepEnabled = { timerEvents.add("enabled=$it") }, onSleepMinutes = { timerEvents.add("minutes=$it") },
                 )
             }
         }
@@ -137,6 +140,44 @@ class PlayerNavigationTest {
         compose.onNodeWithContentDescription("Add server").assertIsDisplayed()
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithTag("tab_1").assertIsSelected()
+    }
+
+    @Test
+    fun playerTimerStatusAndSettingsOpenTheSameDialogForOffWaitingRunningAndErrorStates() {
+        show()
+        val record = TimerRecord("00000000-0000-0000-0000-000000000001", server, 1, 1, null, TimerStatus.WAITING)
+        val timers = listOf(
+            SleepTimerState(loading = false),
+            SleepTimerState(settings = TimerSettings(record = record), loading = false),
+            SleepTimerState(settings = TimerSettings(record = record.copy(status = TimerStatus.ACTIVE, deadline = 120_001)),
+                remainingMillis = 120_000, loading = false),
+            SleepTimerState(settings = TimerSettings(record = record.copy(status = TimerStatus.FAILED, error = TimerError.NETWORK)), loading = false),
+        )
+        for (timer in timers) {
+            compose.runOnIdle { ui.value = ui.value.copy(sleepTimer = timer) }
+            for (fromPlayer in listOf(true, false)) {
+                if (fromPlayer) compose.onNodeWithTag("sleep_compact_status").performScrollTo().performClick()
+                else {
+                    compose.onNodeWithContentDescription("Settings").performClick()
+                    compose.onNodeWithText("Sleep timer").performClick()
+                }
+                compose.onNodeWithTag("sleep_timer_switch").assertExists()
+                if (timer.enabled) compose.onNodeWithTag("sleep_timer_switch").assertIsOn()
+                else compose.onNodeWithTag("sleep_timer_switch").assertIsOff()
+                compose.onNodeWithTag("timer_duration_dropdown").performScrollTo().assertTextContains("30 minutes")
+                if (timer.settings.record?.status == TimerStatus.FAILED) {
+                    compose.onNodeWithText("Pause could not be confirmed. Check the server and network. No automatic retry.")
+                        .performScrollTo().assertIsDisplayed()
+                }
+                compose.onNodeWithText("Done").performClick()
+                compose.onNodeWithTag("sleep_timer_switch").assertDoesNotExist()
+                compose.runOnIdle {
+                    assertEquals(timer, ui.value.sleepTimer)
+                    assertTrue(timerEvents.isEmpty())
+                    assertTrue(actions.isEmpty())
+                }
+            }
+        }
     }
 
     @Test

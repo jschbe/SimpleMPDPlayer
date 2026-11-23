@@ -204,4 +204,5 @@
     <string name="language_ru">Русский</string>
     <string name="app_license">GPL-3.0-or-later</string>
     <string name="source_repository_url">https://github.com/jschbe/SimpleMPDPlayer</string>
+    <string name="duplicate_server_name">Сервер із такою назвою вже існує.</string>
 </resources>

@@ -184,7 +184,8 @@ fun ServersApp(
                 HorizontalPager(state = pager, modifier = Modifier.weight(1f).testTag("main_pager")) { page ->
                     when (page) {
                         0 -> BrowserScreen(state.browser, connected, controlsEnabled, onBrowse, onEnqueue)
-                        1 -> PlayerScreen(state, controlsEnabled, onAction, onLocalListening, onTrackInfoExpanded)
+                        1 -> PlayerScreen(state, controlsEnabled, onAction, onLocalListening, onTrackInfoExpanded,
+                            onOpenSleepTimer = { sleepTimer = true })
                         2 -> QueueScreen(
                             state.connection.snapshot, state.settings.selectedId,
                             controlsEnabled, pager.settledPage == 2, onAction,
@@ -195,7 +196,7 @@ fun ServersApp(
         }
     }
     state.editor?.let { editor ->
-        key(editor.token) { ServerEditorDialog(editor, state.saving, state.saveFailed, onDismissEditor, onSave, onTest) }
+        key(editor.token) { ServerEditorDialog(editor, state.settings.servers, state.saving, state.saveFailed, onDismissEditor, onSave, onTest) }
     }
     if (sleepTimer) {
         SleepTimerDialog(state.sleepTimer, state.activeServer?.name, state.saving,

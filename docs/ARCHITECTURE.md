@@ -58,7 +58,9 @@ A single application-context `preferencesDataStore` instance stores:
 | `recovered_corrupt_file` | Recovery marker when DataStore replaces an unreadable corrupt file |
 | `theme_mode` | SYSTEM (default), LIGHT or DARK |
 
-Control characters are invalid profile input, so field delimiters need no custom escaping. No credentials are stored. Decoding skips invalid/duplicate rows, clears dangling selections and reports recovery. Wrong preference types are also treated as invalid input. A successful edit writes a sanitized snapshot. DataStore file corruption resets to empty settings with a warning; an ordinary IO read error shows Retry and disables edits rather than silently replacing data. Changes use DataStore's atomic edit operation.
+Control characters are invalid profile input, so field delimiters need no custom escaping. No credentials are stored. Decoding skips invalid rows and duplicate IDs, clears dangling selections and reports recovery. Legacy duplicate display names remain intact. Wrong preference types are also treated as invalid input. A successful edit writes a sanitized snapshot. DataStore file corruption resets to empty settings with a warning; an ordinary IO read error shows Retry and disables edits rather than silently replacing data. Changes use DataStore's atomic edit operation.
+
+The editor and atomic profile save share `hasDuplicateName`: trim both names, compare with Kotlin's locale-independent `ignoreCase`, and exclude only the edited stable ID. The editor shows duplicate errors immediately and disables Save for duplicate or syntactically invalid names. The store checks the current snapshot inside the existing mutation lock/DataStore edit; a conflicting save leaves storage/selection intact. The ViewModel keeps the editor open and refreshes settings for field validation after such a conflict. Decoding and unrelated writes do not enforce name uniqueness, so legacy duplicates can be selected, reordered, deleted or explicitly renamed without silent migration.
 
 ## Server UI addendum
 
@@ -142,7 +144,7 @@ Waiting cannot detect a server-side transition while the process is dead/suspend
 
 `SleepTimerDialog` uses one Material 3 ExposedDropdownMenu for presets/Custom, with numeric custom input and IME Done. A valid IME Done and the dialog Done both call `setMinutes`; neither calls `setEnabled`. Invalid values stay unapplied; the explicit Custom Apply button is removed. The independent switch uses the last applied value. An unchanged value is idempotent, including IME Done followed by dialog Done. Saved custom-mode/text state survives Activity recreation without firing callbacks.
 
-`PlayerScreen` puts MPD and sleep state on one weighted row with single-line ellipsis (full semantic text remains available), uses compact remaining minutes, and shows waiting distinctly. Listen on phone has its own 48 dp info button/dialog beside the label; the containing row does not toggle reception, and the persistent explanatory paragraph is removed. Random remains a label/switch group beside a compact Repeat dropdown in a FlowRow: one row when they fit, whole-control wrapping for narrow/large-text layouts. Dropdown text can wrap within its available width. Existing MPD commands remain authoritative.
+`PlayerScreen` puts MPD and sleep state on one weighted row with the same explicit `bodyLarge` typography, MPD aligned Start and timer aligned End. Both texts wrap at large font sizes or narrow widths instead of truncating. The whole weighted timer area is a minimum-48-dp-high accessible button with the existing localized Sleep timer label and a click action; it opens the same saveable `ServersApp` dialog flag used by Settings → Sleep timer. Compact remaining minutes, waiting/off states and the existing separate error hint remain unchanged. Opening the dialog sends no timer or MPD mutation. Its `clickable(interactionSource = null, indication = null)` retains the touch/accessibility behavior without drawing pressed-state feedback. Listen on phone has its own 48 dp info button/dialog beside the label; the containing row does not toggle reception, and the persistent explanatory paragraph is removed. Random remains a label/switch group beside a compact Repeat dropdown in a FlowRow: one row when they fit, whole-control wrapping for narrow/large-text layouts. Both groups align vertically at their centers and are horizontally centered together with `Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)`. Wrapped groups each center on their own row; the existing 16 dp group gap, 8 dp label/switch gap and 4 dp row gap are retained. The closed Repeat text explicitly shares Random's `bodyLarge` typography and inherited content color, including when disabled; the opened Material 3 menu is unchanged. Dropdown text can wrap within its available width. Existing MPD commands remain authoritative.
 
 Track metadata uses a minimum-48-dp accessible expand/collapse row, decorative chevron, labeled action and expanded/collapsed state description. Expanded typography retains title/artist/album; collapsed shows only title/filename with smaller typography and bounded lines. The global `track_info_expanded` boolean defaults to true in the existing server Preferences DataStore. Raw-type decoding recovers invalid input, and ordinary read failures preserve stored data. ViewModel/store callbacks persist the preference without changing endpoints or connecting; title/server/status updates do not reset it. No separate preference framework or local metadata cache is added.
 
@@ -182,7 +184,13 @@ Explicit connect/switch/close and manual restart cancel pending recovery immedia
 
 `MpdNetworkObserver` is a single process-lifetime passive ConnectivityManager callback, created with the repository. ACCESS_NETWORK_STATE is a normal permission. A capability-unrestricted NetworkRequest includes LAN-only Wi-Fi/VPN rather than requiring validated Internet. Callback bookkeeping and the initial available-network snapshot are serialized on Main; no synchronous network queries occur in callbacks. Known absence suspends attempts without consuming another slot and skips heartbeat/check attempts. Unknown state remains permissive and socket failures remain bounded. No network is requested, bound or kept awake. Presence of a network does not prove this server is reachable. Reference: [Android network-state callbacks](https://developer.android.com/develop/connectivity/network-ops/reading-network-state).
 
-`MainActivity` delegates ON_RESUME to `ServersViewModel.onForeground`: permission/timer refresh plus one repository health check. The session's single-flight check serializes ping/full readback with other operations and triggers the same repair loop only on failure. Healthy control and idle sockets survive ordinary foreground/Activity recreation. Network return requests the same check. No new periodic task/service exists: the old 15-second command heartbeat remains while the process/session lives; retries are cancellable delays/flow waits, not durable scheduled work.
+`MainActivity` delegates ON_RESUME to `ServersViewModel.onForeground`: permission/timer refresh plus a repository health-check request. `onWindowFocusChanged(true)` independently requests a check when the lifecycle is RESUMED. Focus before resume is covered by ON_RESUME; focus after resume and focus-only returns are covered by the window callback. There is no assumption about their order. Both callbacks and Compose use the same lifecycle-owned ViewModel obtained through `ViewModelProvider` and the existing explicit factory.
+
+The ViewModel merges foreground/focus events during a 300 ms delay, captures the selected stable ID/endpoint, and revalidates it against settings and the repository before checking. Switching/reconnecting cancels that queued job. The session's existing single-flight check serializes ping/full readback with other operations and triggers the same repair loop only on failure. Healthy control and idle sockets survive ordinary foreground/Activity recreation. A pending reconnect is never restarted, and exhausted budgets remain manual. Network return requests the same repository check directly. No new periodic task/service exists: the old 15-second command heartbeat remains while the process/session lives; retries are cancellable delays/flow waits, not durable scheduled work.
+
+For the reported overnight Samsung incident, missing focus-only checks are provable from the prior Activity implementation. It had only an ON_RESUME hook; a resumed Activity regaining focus without another resume did not request a readback. Its single-flight repository check merged only overlapping IO, not short callback bursts after fast IO. Repository session/generation guards already reject old-server results and cancel old recovery; there is no background loop over stored profiles. A command failure and an independent timer failure for its originally bound target are separate states, not evidence of two interactive servers. An exhausted background retry budget can also explain why process restart helps, but no handset trace establishes which occurred. Doze/Wi-Fi interruption and the initiating socket remain unconfirmed.
+
+The repository accepts a no-op-by-default diagnostic sink. `PlayerApplication` routes it to `MpdConnection` Logcat only in debug builds. Messages use fixed event/enum names, a process-local generation counter, retry count and connectivity/recovery booleans; they omit profile IDs/names, hosts, ports, credentials, payloads and exception text. Checks identify foreground/window-focus/network triggers; failures distinguish setup/control/idle and categories, and recovery logs attempts/restoration/exhaustion. No heartbeat-success logging, persistent log store, telemetry or device-specific power workaround is added. The sleep-timer connection, target, storage and alarm logic are unchanged.
 
 `LocalStreamController` retains an existing manually authorized request with its last confirmed snapshot during same-server recovery. The process owner continues forwarding actual snapshots; the existing service does not recreate ExoPlayer, HTTP or MediaSession when only control changes. A snapshot changing MPD play/pause still drives the normal local pause/live-origin resume policy. M6 transport checks connectivity/network availability; unavailable control cannot send commands. Terminal full-control failure releases local audio; exhausted idle-only repair can retain healthy control/audio with a visible warning. Off/profile changes and HTTP/focus/audio failures retain their separate existing cleanup/manual-retry behavior. Process death and Android background/network restrictions still apply; no resumption or background availability guarantee is added. M5 timer state/delivery is unchanged.
 
@@ -412,3 +420,136 @@ Only installation/package metadata was accessed: no Activity launch, instrumente
 test, uninstall, data clearing, system-language/settings change or MPD command was
 performed on the Samsung. The single emulator started for this run was stopped
 after testing. No commits, tags or pushes were created.
+
+### Server-name validation and Repeat styling verification
+
+Verified on 2026-11-23 with the wrapper: `assembleDebug`,
+`testDeviceTestUnitTest`, `assembleDeviceTest`, `assembleDeviceTestAndroidTest`
+and `lintDebug` pass. All **155 JVM tests** pass; Lint reports **0 errors and
+20 warnings**, matching the previous count. All seven catalogs and the English
+CSV remain consistent. `git diff --check` passes.
+
+On Medium Phone (`medium_phone`, API 36), all **74 active Android tests** passed
+across separate instrumentation runs; four optional live-LAN/process probes
+remained disabled. The initial whole-suite run completed 48 active tests before
+hanging in the existing external app-language/lifecycle test. Only the suffixed
+test app was stopped; that same test passed in a fresh process, and all 25
+remaining tests passed in another run. This is complete test coverage across
+runs, not a successful uninterrupted whole-suite run.
+
+New JVM coverage checks duplicate/case/whitespace names, stable-ID exclusion,
+conflicting edits, unchanged storage/selection on rejection, legacy duplicates
+across disk reload and unrelated writes, explicit renaming, and a competing
+write before Save. Compose coverage checks Add/Edit errors and disabled Save,
+legacy duplicate repair, matching closed Repeat/Random size, weight, color and
+text baseline in all themes and when disabled. Existing repeat selections,
+confirmed-state behavior and 300 dp / 2x-font wrapping pass. A German large-font
+Player screenshot was also visually inspected. MPD option commands are unchanged.
+
+No real MPD endpoint or physical device was accessed. Tests installed only the
+isolated `.devicetest` APKs; the normal app and its profiles were untouched.
+Runtime coverage remains API 36; other API levels and physical-device rendering
+were not exercised. No dependency, permission, build configuration, commit, tag
+or push is part of these corrections.
+
+### Unlock/window-focus recovery verification
+
+Verified on 2026-11-23: wrapper `assembleDebug`, `testDeviceTestUnitTest`,
+`assembleDeviceTest`, `assembleDeviceTestAndroidTest` and `lintDebug` pass.
+All **160 JVM tests** pass; Lint reports **0 errors and 20 warnings**.
+`git diff --check` passes. Earlier server-name/Repeat changes remain intact;
+dependencies, permissions, build configuration and timer implementation are unchanged.
+
+The isolated `.devicetest` Android suite covered all 81 discovered cases on
+Medium Phone (`medium_phone`, API 36): **77 active tests passed**, and four
+optional live-LAN/process probes were skipped. The whole-suite run completed
+51 active tests before hanging at the previously documented external app-language
+test. Only the suffixed test app was stopped; the same test and all remaining
+cases passed in a fresh 26-test instrumentation run. This verifies the full
+set across two runs, not an uninterrupted whole-suite pass.
+
+New JVM regressions cover resume/focus bursts with one readback and unchanged
+healthy sockets, delayed settings loading before adopting/checking a shared
+session, a focus-detected command failure using the existing backoff, pending
+check cancellation and server switching during recovery, and a deliberately
+late inactive-server failure producing neither UI errors nor notices. The
+existing five-attempt test now includes focus after exhaustion and verifies
+sanitized diagnostic output without resetting the budget.
+
+Three new loopback Android cases verify a real Dialog focus loss/gain without
+ON_RESUME, both focus/resume callback orders, burst coalescing, actual sleep/wake
+and keyguard dismissal without recreating the Activity, command-socket recovery
+with refreshed metadata/queue/idle, no connections to an inactive saved profile,
+and switching during recovery without more old-server attempts. Running timer
+records, including their original target/generation/deadline, remain identical.
+The lock fixture waits for actual lifecycle/focus loss before waking rather
+than assuming a fixed shell-command delay. All new cases assert read-only MPD
+traffic; the existing isolated idle repair/media/timer tests also pass.
+
+No production MPD endpoint or physical-device test was used. ADB discovery at
+completion found only the emulator, so Samsung deployment was skipped. Normal
+app data/profiles were untouched; the debug APK is available under
+`app/build/outputs/apk/debug/app-debug.apk`. No commit, tag or push was created.
+The Samsung Android 13 overnight incident, genuine Doze/Wi-Fi power loss, silent
+idle TCP blackholes and OEM timing are not reproduced by these API 36 fixtures.
+Exhausted retry budgets still require manual Reconnect; focus is not a new
+automatic retry allowance. The new debug-only diagnostics support distinguishing
+those states during a subsequent manual handset observation.
+
+### Centered playback-options verification
+
+Verified on 2026-11-23: debug build, all 11 focused `MpdRepeatTest` JVM cases
+and Lint pass (0 errors, 20 warnings). All nine `RepeatOptionsUiTest` and
+`CompactPlayerUiTest` Compose cases pass on the explicitly authorized Samsung
+Galaxy A51 / Android 13 (API 33), using the isolated `.devicetest` app only.
+Geometry assertions check the combined group's center at normal width and each
+wrapped group's center at 300 dp / 2x font size. Existing typography/color,
+non-clipping, selection and captured-action assertions remain successful.
+The fixtures use supplied state and captured callbacks, without MPD connections
+or the normal app's profiles. No MPD/state-management code changed for this
+alignment correction. `git diff --check` passes.
+
+After testing, the temporary suffixed test APKs were removed and the normal
+debug APK was installed on that Samsung with the explicitly authorized
+`adb install -r`. Installation succeeded with its original first-install time
+unchanged. The normal app was not launched and no production MPD was contacted.
+
+### Player timer-status shortcut verification
+
+Verified on 2026-11-23: debug build, all **160 JVM tests** and Lint pass
+(0 errors, 20 warnings). All **25 targeted Android tests** pass on Medium Phone
+(`medium_phone`, API 36), using only the isolated `.devicetest` app. This covers
+CompactPlayerUiTest, PlayerNavigationTest, RepeatOptionsUiTest, SleepTimerUiTest
+and LocalizedLayoutTest. Production MPD endpoints were not accessed.
+
+New checks verify matching status typography/alignment, at least 48 dp of timer
+touch height, an actual corner tap outside the text, button/name/current-state
+semantics, and access with disabled playback controls. Off, waiting, changing
+remaining minutes, due and failed states retain their existing display behavior
+and open action at 300 dp / 2x font size without text overflow or overlap.
+Navigation fixtures compare the Player shortcut and Settings entry for off,
+waiting, running and failed timers, retaining state and sending no timer/MPD
+events merely to open/close the preset-duration dialog. Existing centered
+Random/Repeat layout and actions remain covered. A German large-font screenshot
+was visually inspected; the translated large-font fixture also covers French,
+Russian and Ukrainian. Timer scheduling/storage, recovery and media-session
+implementation are unchanged.
+
+After verification, fresh ADB discovery identified the authorized Samsung
+SM-A515F as Android 13 / API 33. The normal debug APK installed successfully
+with `adb install -r`; package presence and an unchanged first-install timestamp
+were checked. No physical-device automated test, app launch, profile read/write,
+uninstall, data clearing or MPD command was performed in this run. Samsung
+rendering and actual TalkBack speech remain manual acceptance. No dependency,
+commit, tag or push was added. `git diff --check` passes.
+
+After subsequent explicit authorization to test and deploy the no-indication
+correction on the Samsung, all 17 CompactPlayerUiTest/PlayerNavigationTest cases
+passed on SM-A515F / API 33 using only the isolated `.devicetest` app. The visual
+regression compares pixels before, during and after a held press, including the
+scroll container's delayed press interaction; the timer area remains identical
+and the click still fires. The normal debug APK installed with `install -r`;
+its installed SHA-256 matches the current build and its first-install timestamp
+is unchanged. Temporary test APKs were removed afterward. Normal profiles were
+not read or modified, the normal app was not launched, and these controlled UI
+fixtures opened no MPD connections.

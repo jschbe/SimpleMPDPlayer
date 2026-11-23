@@ -10,6 +10,7 @@ import com.github.jschbe.simplempdplayer.data.*
 import com.github.jschbe.simplempdplayer.audio.*
 import com.github.jschbe.simplempdplayer.mpd.*
 import java.io.IOException
+import java.io.EOFException
 import java.net.ConnectException
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -122,6 +123,36 @@ class ServersViewModelTest {
         assertTrue(f.vm.state.value.settings.servers.isEmpty())
     }
 
+    @Test fun conflictingSaveRefreshesValidationWithoutClosingEditorOrConnecting() = vmTest {
+        val f = fixture(listOf(first), first.id)
+        runCurrent()
+        f.vm.openEditor()
+        val editor = f.vm.state.value.editor
+        val newProfile = second.copy(name = "Concurrent")
+        f.vm.save(newProfile)
+        // Another writer saves the same name after the editor's snapshot, before its atomic write.
+        val concurrent = ServerInput(" CONCURRENT ", "::1").toProfile()!!
+        f.data.updateData { preferences ->
+            preferences.toMutablePreferences().apply {
+                this[stringPreferencesKey("server_profiles_v1")] = ServerSettingsCodec.encode(listOf(first, concurrent))
+            }
+        }
+        runCurrent()
+        assertEquals(editor, f.vm.state.value.editor)
+        assertEquals(listOf(first, concurrent), f.vm.state.value.settings.servers)
+        assertEquals(first.id, f.vm.state.value.settings.selectedId)
+        assertFalse(f.vm.state.value.saving)
+        assertFalse(f.vm.state.value.saveFailed)
+        assertTrue(f.vm.state.value.settings.servers.hasDuplicateName(newProfile.name))
+        assertEquals(2, f.connections.size)
+        assertTrue(f.connections.none { it.closed })
+        f.vm.save(newProfile.copy(name = "Unique"))
+        runCurrent()
+        assertNull(f.vm.state.value.editor)
+        assertEquals(newProfile.id, f.vm.state.value.settings.selectedId)
+        assertEquals(4, f.connections.size)
+    }
+
     @Test fun probeClosesTemporaryConnectionWithoutSavingOrInterruptingActiveSession() = vmTest {
         val f = fixture(listOf(first), first.id)
         runCurrent()
@@ -214,6 +245,120 @@ class ServersViewModelTest {
         assertNull(f.vm.state.value.editor)
     }
 
+    @Test fun resumeAndFocusBurstsCheckOnlySelectedServerOnceWithoutReplacingHealthySockets() = vmTest {
+        val f = fixture(listOf(first, second), first.id)
+        runCurrent()
+        val control = f.connections.first()
+        val pings = control.pings
+        val queueReads = control.commands.count { it == "playlistinfo" }
+        repeat(4) { f.vm.onForeground(); f.vm.onWindowFocusGained() }
+        runCurrent()
+        advanceTimeBy(299); runCurrent()
+        assertEquals(pings, control.pings)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(pings + 1, control.pings)
+        assertEquals(queueReads + 1, control.commands.count { it == "playlistinfo" })
+        assertEquals(2, f.connections.size)
+        assertTrue(f.connections.none { it.closed })
+        assertEquals(first.id, f.vm.state.value.settings.selectedId)
+        assertTrue(f.connections.all { it.commands.all { command -> command in setOf("status", "currentsong", "playlistinfo") } })
+    }
+
+    @Test fun foregroundBeforeSettingsLoadRevalidatesTheAdoptedSharedSession() = vmTest {
+        val connections = mutableListOf<FakeConnection>()
+        val repository = MpdRepository(backgroundScope, { FakeConnection({}, null).also(connections::add) })
+        repository.connect(first)
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        val preferences = mutablePreferencesOf(
+            stringPreferencesKey("server_profiles_v1") to ServerSettingsCodec.encode(listOf(first, second)),
+            stringPreferencesKey("selected_server_id") to first.id,
+        )
+        val data = object : DataStore<Preferences> {
+            override val data = flow<Preferences> { gate.await(); emit(preferences) }
+            override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences = error("No writes expected")
+        }
+        val vm = ServersViewModel(ServerSettingsStore(data), sharedRepository = repository)
+        models.put("adopted", vm)
+        val pings = connections.first().pings
+        vm.onForeground(); vm.onWindowFocusGained()
+        advanceTimeBy(300); runCurrent()
+        assertEquals(pings, connections.first().pings)
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(pings + 1, connections.first().pings)
+        assertEquals(2, connections.size)
+        assertEquals(first.id, vm.state.value.activeServer!!.id)
+        repository.close()
+    }
+
+    @Test fun focusFailureUsesExistingBackoffWithoutRestartingAnOngoingRecovery() = vmTest {
+        val f = fixture(listOf(first, second), first.id)
+        runCurrent()
+        f.connections.first().pingFailure = EOFException()
+        f.vm.onWindowFocusGained()
+        advanceTimeBy(300); runCurrent()
+        assertEquals(ConnectionFailureSource.CONTROL, f.vm.state.value.connection.failureSource)
+        assertTrue(f.vm.state.value.connection.recovering)
+        repeat(3) { f.vm.onForeground(); f.vm.onWindowFocusGained() }
+        advanceTimeBy(999); runCurrent()
+        assertEquals(2, f.connections.size)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(4, f.connections.size)
+        assertEquals(ConnectionStatus.CONNECTED, f.vm.state.value.connection.status)
+        assertTrue(f.vm.state.value.connection.idleConnected)
+        assertFalse(f.vm.state.value.connection.recovering)
+        assertNull(f.vm.state.value.connection.error)
+    }
+
+    @Test fun switchingDiscardsQueuedFocusChecksAndOldRecoveryErrors() = vmTest {
+        val f = fixture(listOf(first, second), first.id)
+        runCurrent()
+        val old = f.connections.first()
+        f.vm.onWindowFocusGained()
+        f.vm.select(second)
+        runCurrent()
+        val pings = old.pings
+        advanceTimeBy(300); runCurrent()
+        assertEquals(pings, old.pings)
+        f.connections[2].pingFailure = EOFException()
+        f.vm.onForeground()
+        advanceTimeBy(300); runCurrent()
+        assertTrue(f.vm.state.value.connection.recovering)
+        f.vm.select(first)
+        runCurrent()
+        f.vm.onWindowFocusGained()
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(6, f.connections.size)
+        assertEquals(first.id, f.vm.state.value.settings.selectedId)
+        assertEquals(ConnectionStatus.CONNECTED, f.vm.state.value.connection.status)
+        assertNull(f.vm.state.value.connection.error)
+        assertFalse(f.vm.state.value.connection.recovering)
+    }
+
+    @Test fun lateInactiveHealthFailureCannotReappearInUiOrNotices() = vmTest {
+        val f = fixture(listOf(first, second), first.id)
+        val notices = mutableListOf<UiNotice>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { f.vm.notices.collect(notices::add) }
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        f.connections.first().pingGate = { withContext(NonCancellable) { gate.await(); throw EOFException() } }
+        f.vm.onWindowFocusGained()
+        advanceTimeBy(300); runCurrent()
+        f.vm.select(second)
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+        f.vm.onForeground(); f.vm.onWindowFocusGained()
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(second.id, f.vm.state.value.settings.selectedId)
+        assertEquals(ConnectionStatus.CONNECTED, f.vm.state.value.connection.status)
+        assertNull(f.vm.state.value.connection.error)
+        assertFalse(f.vm.state.value.connection.recovering)
+        assertEquals(4, f.connections.size)
+        assertTrue(notices.isEmpty())
+    }
+
     @Test fun localActionsSendNoMpdCommandsAndSwitchReleasesBeforeConnecting() = vmTest {
         var starts = 0
         var stops = 0
@@ -279,9 +424,11 @@ class ServersViewModelTest {
     private class FakeConnection(private val gate: suspend () -> Unit, private val failure: IOException?) : MpdConnection {
         var closed = false
         var pings = 0
+        var pingFailure: IOException? = null
+        var pingGate: suspend () -> Unit = {}
         val commands = mutableListOf<String>()
         override suspend fun connect(host: String, port: Int) { gate(); failure?.let { throw it } }
-        override suspend fun ping() { pings++ }
+        override suspend fun ping() { pings++; pingGate(); pingFailure?.let { throw it } }
         override suspend fun execute(name: String, vararg arguments: String): List<Pair<String, String>> {
             commands.add(name)
             return if (name == "status") listOf("state" to "stop", "playlist" to "1", "playlistlength" to "0") else emptyList()

@@ -25,6 +25,83 @@ class ServerSettingsStoreTest {
     @get:Rule val folder = TemporaryFolder()
     private val profile = ServerInput("Test", "localhost").toProfile()!!
 
+    @Test fun duplicateAddsAreRejectedWithoutChangingDataOrSelection() = runBlocking {
+        withStore { store, data ->
+            store.saveAndSelect(profile)
+            val original = data.data.first()
+            for (name in listOf("Test", "TEST", "  test  ")) {
+                val duplicate = ServerInput(name, "::1").toProfile()!!
+                for (activate in listOf(false, true)) {
+                    try {
+                        if (activate) store.saveAndSelect(duplicate) else store.save(duplicate)
+                        fail("Accepted duplicate name: $name")
+                    } catch (_: DuplicateServerNameException) {
+                        assertEquals(original, data.data.first())
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun editingKeepsItsIdButCannotTakeAnotherProfilesName() = runBlocking {
+        withStore { store, data ->
+            val second = ServerInput("Second", "localhost").toProfile()!!
+            store.saveAndSelect(profile)
+            store.save(second)
+            val edited = profile.copy(name = "TEST", mpdPort = 6601)
+            store.saveAndSelect(edited)
+            assertEquals(listOf(edited, second), store.settings.first().servers)
+            assertEquals(profile.id, store.settings.first().selectedId)
+            val original = data.data.first()
+            try {
+                store.saveAndSelect(second.copy(name = " test "))
+                fail("Accepted conflicting edit")
+            } catch (_: DuplicateServerNameException) {
+                assertEquals(original, data.data.first())
+            }
+            store.saveAndSelect(second.copy(name = "Renamed"))
+            assertEquals(second.id, store.settings.first().selectedId)
+            assertEquals(listOf(profile.id, second.id), store.settings.first().servers.map { it.id })
+        }
+    }
+
+    @Test fun legacyDuplicateNamesSurviveReloadAndUnrelatedWritesUntilExplicitlyRenamed() = runBlocking {
+        val file = folder.newFolder().resolve("legacy.preferences_pb")
+        val duplicate = ServerInput("Other", "::1").toProfile()!!.copy(name = "  tEsT  ")
+        val profiles = listOf(profile, duplicate)
+        val encoded = ServerSettingsCodec.encode(profiles)
+        withStore(file) { _, data ->
+            data.edit {
+                it[stringPreferencesKey("server_profiles_v1")] = encoded
+                it[stringPreferencesKey("selected_server_id")] = duplicate.id
+            }
+        }
+        withStore(file) { store, data ->
+            assertEquals(profiles, store.settings.first().servers)
+            assertEquals(duplicate.id, store.settings.first().selectedId)
+            assertFalse(store.settings.first().recovered)
+            assertEquals(encoded, data.data.first()[stringPreferencesKey("server_profiles_v1")])
+            store.setTheme(ThemeMode.DARK)
+            store.select(profile.id)
+            store.reorder(listOf(duplicate.id, profile.id))
+            assertEquals(listOf(duplicate, profile), store.settings.first().servers)
+            try {
+                store.save(duplicate)
+                fail("Legacy duplicate edit needs a unique name")
+            } catch (_: DuplicateServerNameException) {
+                assertEquals(listOf(duplicate, profile), store.settings.first().servers)
+            }
+            store.save(duplicate.copy(name = "Unique"))
+            store.save(profile.copy(name = "TEST"))
+            assertEquals(listOf(duplicate.id, profile.id), store.settings.first().servers.map { it.id })
+            assertEquals(listOf("Unique", "TEST"), store.settings.first().servers.map { it.name })
+        }
+        withStore(file) { store, _ ->
+            assertEquals(listOf(duplicate.id, profile.id), store.settings.first().servers.map { it.id })
+            assertEquals(profile.id, store.settings.first().selectedId)
+        }
+    }
+
     @Test
     fun orderedProfilesAndThemeSurviveDiskReloadWithoutRetargeting() = runBlocking {
         val file = folder.newFolder().resolve("test.preferences_pb")

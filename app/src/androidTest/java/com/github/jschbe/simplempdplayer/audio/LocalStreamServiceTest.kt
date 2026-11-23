@@ -433,6 +433,110 @@ class LocalStreamServiceTest {
         fixture.assertReadOnly()
     }
 
+    @Test fun windowFocusWithoutResumeChecksHealthySocketsAndMergesBothCallbackOrders() {
+        waitFor { app.repository.state.value.idleConnected && !app.repository.state.value.recovering }
+        SystemClock.sleep(500) // Finish the startup resume/focus burst before measuring.
+        lateinit var original: MainActivity
+        lateinit var dialog: android.app.Dialog
+        val resumes = AtomicInteger()
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) resumes.incrementAndGet()
+        }
+        activity!!.onActivity {
+            original = it
+            it.lifecycle.addObserver(observer)
+            dialog = android.app.Dialog(it).apply {
+                setContentView(android.widget.TextView(it).apply { text = "Focus fixture" })
+                show()
+            }
+        }
+        waitFor { !original.hasWindowFocus() }
+        val resumeCount = resumes.get()
+        val reads = fixture.statusReads.get()
+        fixture.title = "Focus readback title"
+        fixture.playback("pause", notify = false)
+        main { dialog.dismiss() }
+        waitFor { original.hasWindowFocus() && app.repository.state.value.snapshot?.currentSong?.title == fixture.title }
+        assertEquals(resumeCount, resumes.get()) // Actual window focus changed without a resume callback.
+        assertEquals(reads + 2, fixture.statusReads.get())
+        assertEquals(com.github.jschbe.simplempdplayer.mpd.PlaybackState.PAUSED, app.repository.state.value.snapshot!!.status.playback)
+
+        // Focus before resume is ignored while STARTED; resume must still request the check.
+        activity!!.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+        val before = fixture.statusReads.get()
+        activity!!.onActivity { it.onWindowFocusChanged(true) }
+        SystemClock.sleep(400)
+        assertEquals(before, fixture.statusReads.get())
+        activity!!.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        activity!!.onActivity { repeat(4) { _ -> it.onWindowFocusChanged(true) } }
+        waitFor { fixture.statusReads.get() == before + 2 }
+        SystemClock.sleep(400)
+        assertEquals(before + 2, fixture.statusReads.get())
+        assertEquals(2, fixture.mpdConnections.get())
+        activity!!.onActivity { assertSame(original, it); it.lifecycle.removeObserver(observer) }
+        fixture.assertReadOnly()
+    }
+
+    @Test fun unlockWithoutActivityRestartRecoversControlAndKeepsTimerAndInactiveServerUntouched() {
+        val other = AudioFixture(instrumentation.context.assets.open("stream-tone.mp3").use { it.readBytes() })
+        try {
+            val inactive = ServerInput("Inactive unlock fixture", "localhost", other.mpdPort.toString(), other.httpPort.toString()).toProfile()!!
+            runBlocking { store.save(inactive); app.sleepTimer.setMinutes(60); app.sleepTimer.setEnabled(true) }
+            waitFor { app.sleepTimer.state.value.settings.record?.status == com.github.jschbe.simplempdplayer.timer.TimerStatus.ACTIVE }
+            val record = app.sleepTimer.state.value.settings.record!!
+            lateinit var original: MainActivity
+            activity!!.onActivity { original = it }
+            shell("input keyevent KEYCODE_SLEEP")
+            // Wait for the actual lock transition before waking; shell input returns earlier.
+            waitFor { !original.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) &&
+                !original.hasWindowFocus() }
+            fixture.dropControl()
+            fixture.title = "Unlock readback title"
+            fixture.playback("pause", notify = false)
+            shell("input keyevent KEYCODE_WAKEUP")
+            shell("wm dismiss-keyguard")
+            waitFor { app.repository.state.value.idleConnected && !app.repository.state.value.recovering &&
+                app.repository.state.value.snapshot?.currentSong?.title == fixture.title }
+            activity!!.onActivity { assertSame(original, it) }
+            assertEquals(4, fixture.mpdConnections.get())
+            assertEquals(0, other.mpdConnections.get())
+            assertEquals(record, app.sleepTimer.state.value.settings.record)
+            assertEquals(fixture.title, app.repository.state.value.snapshot!!.queue.single().song.title)
+            assertEquals(com.github.jschbe.simplempdplayer.mpd.PlaybackState.PAUSED, app.repository.state.value.snapshot!!.status.playback)
+            assertTrue(other.mutations().isEmpty())
+            fixture.assertReadOnly()
+        } finally { other.close() }
+    }
+
+    @Test fun switchDuringFocusRecoveryStopsOldChecksAndPreservesOriginalTimerTarget() {
+        runBlocking { app.sleepTimer.setMinutes(60); app.sleepTimer.setEnabled(true) }
+        waitFor { app.sleepTimer.state.value.settings.record?.status == com.github.jschbe.simplempdplayer.timer.TimerStatus.ACTIVE }
+        val record = app.sleepTimer.state.value.settings.record!!
+        val other = AudioFixture(instrumentation.context.assets.open("stream-tone.mp3").use { it.readBytes() })
+        try {
+            fixture.acceptMpd = false
+            fixture.dropControl()
+            activity!!.onActivity { it.onWindowFocusChanged(true) }
+            waitFor { app.repository.state.value.recovering }
+            main { app.repository.networkChanged(false) }
+            val oldConnections = fixture.mpdConnections.get()
+            val profile = ServerInput("Focus recovery target", "localhost", other.mpdPort.toString(), other.httpPort.toString()).toProfile()!!
+            runBlocking { store.saveAndSelect(profile) }
+            waitFor { app.repository.activeServer?.id == profile.id }
+            activity!!.onActivity { repeat(4) { _ -> it.onWindowFocusChanged(true) } }
+            main { app.repository.networkChanged(true) }
+            waitFor { app.repository.state.value.idleConnected && !app.repository.state.value.recovering }
+            SystemClock.sleep(1_200)
+            assertEquals(oldConnections, fixture.mpdConnections.get())
+            assertEquals(2, other.mpdConnections.get())
+            assertNull(app.repository.state.value.error)
+            assertFalse(app.repository.state.value.retriesExhausted)
+            assertEquals(record, app.sleepTimer.state.value.settings.record)
+            assertNotEquals(profile.id, record.target.id)
+            fixture.assertReadOnly(); other.assertReadOnly()
+        } finally { other.close() }
+    }
+
     @Test fun offlineRecoveryWaitsAndSwitchCancelsOldServerRetries() {
         enable()
         waitFor { app.localStream.state.value.phase == StreamPhase.ACTIVE }
