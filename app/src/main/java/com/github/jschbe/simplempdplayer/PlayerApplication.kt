@@ -40,7 +40,7 @@ class PlayerApplication : Application() {
     private val repositoryDelegate: Lazy<MpdRepository> = lazy {
         MpdRepository(playbackScope, diagnostics = { message ->
             if (BuildConfig.DEBUG) android.util.Log.d("MpdConnection", message)
-        }).also { repository ->
+        }, elapsedMillis = android.os.SystemClock::elapsedRealtime).also { repository ->
             com.github.jschbe.simplempdplayer.mpd.MpdNetworkObserver(this, repository::networkChanged).start()
             playbackScope.launch { repository.state.collect { sleepTimer.playbackChanged() } }
         }

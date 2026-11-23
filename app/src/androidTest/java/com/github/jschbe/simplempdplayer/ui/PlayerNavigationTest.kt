@@ -52,7 +52,7 @@ class PlayerNavigationTest {
         ui.value = ServersUiState(
             settings = ServerSettings(listOf(server), if (selected) server.id else null),
             loading = false,
-            connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = data, sessionId = 1),
+            connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = data, sessionId = 1, idleConnected = true, playerConfirmedAtMillis = 0),
             positionSeconds = data.status.elapsed,
         )
         val content: @androidx.compose.runtime.Composable () -> Unit = {
@@ -130,7 +130,7 @@ class PlayerNavigationTest {
         compose.onNodeWithText("Clear the queue?").assertDoesNotExist()
         val newQueue = snapshot.copy(queue = snapshot.queue.reversed())
         compose.runOnIdle {
-            ui.value = ui.value.copy(connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = newQueue, sessionId = 2))
+            ui.value = ui.value.copy(connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = newQueue, sessionId = 2, idleConnected = true, playerConfirmedAtMillis = 0))
         }
         compose.onNodeWithText("Clear the queue?").assertDoesNotExist()
         compose.onNodeWithTag("queue_list").performScrollToIndex(0)
@@ -140,7 +140,7 @@ class PlayerNavigationTest {
         val edited = server.copy(mpdPort = server.mpdPort + 1)
         compose.runOnIdle {
             ui.value = ui.value.copy(settings = ServerSettings(listOf(edited), edited.id),
-                connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = snapshot, sessionId = 3))
+                connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = snapshot, sessionId = 3, idleConnected = true, playerConfirmedAtMillis = 0))
         }
         compose.onNodeWithText("Remove").assertDoesNotExist()
         compose.onNodeWithText("Clear queue").performClick()
@@ -148,7 +148,7 @@ class PlayerNavigationTest {
         val another = ServerInput("Another fixture", "localhost").toProfile()!!
         compose.runOnIdle {
             ui.value = ui.value.copy(settings = ServerSettings(listOf(edited, another), another.id),
-                connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = snapshot, sessionId = 4))
+                connection = ConnectionState(ConnectionStatus.CONNECTED, snapshot = snapshot, sessionId = 4, idleConnected = true, playerConfirmedAtMillis = 0))
         }
         compose.onNodeWithText("Clear the queue?").assertDoesNotExist()
         compose.runOnIdle { assertTrue(actions.isEmpty()) }
@@ -183,9 +183,31 @@ class PlayerNavigationTest {
     }
 
     @Test
+    fun playerShowsStaleStatusUntilOngoingSynchronizationReturns() {
+        show()
+        val stale = compose.onNodeWithText("Showing the last received server state")
+        stale.assertDoesNotExist()
+        compose.runOnIdle {
+            ui.value = ui.value.copy(connection = ui.value.connection.copy(waitingForNetwork = true,
+                playerConfirmedAtMillis = null))
+        }
+        stale.assertIsDisplayed()
+        compose.onNodeWithContentDescription("Play").assertIsNotEnabled()
+        compose.runOnIdle {
+            ui.value = ui.value.copy(connection = ui.value.connection.copy(waitingForNetwork = false,
+                idleConnected = false, playerConfirmedAtMillis = 1))
+        }
+        stale.assertIsDisplayed()
+        compose.onNodeWithContentDescription("Play").assertIsEnabled()
+        compose.runOnIdle { ui.value = ui.value.copy(connection = ui.value.connection.copy(idleConnected = true)) }
+        stale.assertDoesNotExist()
+    }
+
+    @Test
     fun unavailableQueueKeepsPlayerControlsAndOffersRetryAndExplicitClear() {
         show(snapshot.copy(queue = emptyList(), queueAvailability = QueueAvailability.LIMIT))
         compose.onNodeWithContentDescription("Play").assertIsEnabled()
+        compose.onNodeWithText("Showing the last received server state").assertDoesNotExist()
         compose.onNodeWithTag("tab_2").performClick()
         compose.onNodeWithText("Queue unavailable. It exceeds the loading limit.").assertIsDisplayed()
         compose.onNodeWithText("The queue is empty").assertDoesNotExist()

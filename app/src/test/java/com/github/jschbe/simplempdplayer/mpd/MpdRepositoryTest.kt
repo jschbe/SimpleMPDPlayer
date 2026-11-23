@@ -315,6 +315,7 @@ class MpdRepositoryTest {
         val repository = MpdRepository(backgroundScope, server::connection)
         repository.connect(first); runCurrent()
         assertEquals(ConnectionStatus.CONNECTED, repository.state.value.status)
+        assertTrue(repository.state.value.livePlayerStatus)
         assertEquals(QueueAvailability.LIMIT, repository.state.value.snapshot!!.queueAvailability)
         assertTrue(repository.state.value.snapshot!!.hasQueuedSongs)
         assertTrue(server.ranges().isEmpty())
@@ -574,7 +575,7 @@ class MpdRepositoryTest {
         repository.close()
     }
 
-    @Test fun recoveryUsesExactlyFiveExponentialDelaysThenRequiresManualRetry() = runTest {
+    @Test fun recoveryUsesExactlyFiveExponentialDelaysAndOrdinaryChecksDoNotRearm() = runTest {
         val server = FakeServer().apply { connectBlock = { throw ConnectException("refused") } }
         val diagnostics = mutableListOf<String>()
         val repository = MpdRepository(backgroundScope, server::connection, diagnostics = diagnostics::add)
@@ -605,6 +606,116 @@ class MpdRepositoryTest {
         assertEquals(ConnectionStatus.CONNECTED, repository.state.value.status)
         assertEquals(0, repository.state.value.retryAttempt)
         assertFalse(repository.state.value.retriesExhausted)
+        repository.close()
+    }
+
+    @Test fun authorizedReturnWaitsOfflineAndDoesNotResetAnActiveCycle() = runTest {
+        val server = FakeServer().apply { connectBlock = { throw EOFException() } }
+        val repository = MpdRepository(backgroundScope, server::connection)
+        repository.connect(first); runCurrent()
+        advanceTimeBy(31_000); runCurrent()
+        assertTrue(repository.state.value.retriesExhausted)
+        repository.networkChanged(false)
+        repository.resumeExhaustedRecovery()
+        advanceTimeBy(120_000); runCurrent()
+        assertTrue(repository.state.value.recovering)
+        assertEquals(12, server.connections.size)
+        assertEquals(0, repository.state.value.retryAttempt)
+
+        repository.networkChanged(true)
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(1, repository.state.value.retryAttempt)
+        repository.resumeExhaustedRecovery()
+        advanceTimeBy(1_999); runCurrent()
+        assertEquals(14, server.connections.size)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(16, server.connections.size)
+        advanceTimeBy(28_000); runCurrent()
+        assertEquals(22, server.connections.size)
+        assertTrue(repository.state.value.retriesExhausted)
+        repeat(5) { repository.checkConnection(ConnectionCheckTrigger.WINDOW_FOCUS) }
+        advanceTimeBy(60_000); runCurrent()
+        assertEquals(22, server.connections.size)
+
+        server.connectBlock = {}
+        repository.resumeExhaustedRecovery()
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(24, server.connections.size)
+        assertTrue(repository.state.value.livePlayerStatus)
+        assertFalse(repository.state.value.retriesExhausted)
+        repository.close()
+    }
+
+    @Test fun exhaustedIdleRestartsOnlyIdleAndSingleCommandReadCanConfirmPlayback() = runTest {
+        val server = FakeServer()
+        val repository = MpdRepository(backgroundScope, server::connection, elapsedMillis = { testScheduler.currentTime })
+        repository.connect(first); runCurrent()
+        val sessionId = repository.state.value.sessionId
+        val oldEvents = server.events
+        server.events = Channel(Channel.UNLIMITED)
+        oldEvents.close(EOFException()); runCurrent()
+        server.connectBlock = { throw EOFException() }
+        assertFalse(repository.state.value.hasConfirmedPlayerStatus(testScheduler.currentTime))
+        assertFalse(repository.state.value.livePlayerStatus)
+        advanceTimeBy(31_000); runCurrent()
+        assertTrue(repository.state.value.retriesExhausted)
+        assertEquals(7, server.connections.size)
+
+        server.playback = "pause"
+        repository.confirmTimerPlayback(); runCurrent()
+        assertEquals(PlaybackState.PAUSED, repository.state.value.snapshot!!.status.playback)
+        assertTrue(repository.state.value.hasConfirmedPlayerStatus(testScheduler.currentTime))
+        assertFalse(repository.state.value.livePlayerStatus)
+        assertFalse(repository.state.value.hasConfirmedPlayerStatus(testScheduler.currentTime + 5_001))
+        assertFalse(server.connections.first().closed)
+
+        server.connectBlock = {}
+        repository.resumeExhaustedRecovery()
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(8, server.connections.size)
+        assertEquals(sessionId, repository.state.value.sessionId)
+        assertTrue(repository.state.value.livePlayerStatus)
+        assertFalse(server.connections.first().closed)
+        repository.close()
+    }
+
+    @Test fun capacityExhaustionDoesNotRearmOnReturn() = runTest {
+        val server = FakeServer().apply { connectBlock = { throw MpdResponseLimit() } }
+        val repository = MpdRepository(backgroundScope, server::connection)
+        repository.connect(first); runCurrent()
+        advanceTimeBy(31_000); runCurrent()
+        assertEquals(ConnectionError.RESPONSE_LIMIT, repository.state.value.error)
+        assertTrue(repository.state.value.retriesExhausted)
+        repository.resumeExhaustedRecovery()
+        advanceTimeBy(31_000); runCurrent()
+        assertEquals(12, server.connections.size)
+        assertFalse(repository.state.value.recovering)
+        repository.close()
+    }
+
+    @Test fun returnInvalidatesAnInFlightReadAndMergesChecksForTheNewEpoch() = runTest {
+        val server = FakeServer()
+        val repository = MpdRepository(backgroundScope, server::connection)
+        repository.connect(first); runCurrent()
+        val oldRead = CompletableDeferred<Unit>()
+        val newRead = CompletableDeferred<Unit>()
+        var reads = 0
+        server.statusBlock = {
+            if (++reads == 1) oldRead.await()
+            if (reads == 4) newRead.await()
+        }
+        repository.checkConnection(); runCurrent()
+        repository.invalidatePlayerStatus()
+        repeat(3) { repository.checkConnection() }
+        oldRead.complete(Unit); runCurrent()
+        assertEquals(4, reads)
+        assertNull(repository.state.value.playerConfirmedAtMillis)
+        server.playback = "pause"
+        newRead.complete(Unit); runCurrent()
+        assertEquals(6, reads)
+        assertEquals(PlaybackState.PAUSED, repository.state.value.snapshot!!.status.playback)
+        assertTrue(repository.state.value.livePlayerStatus)
+        assertEquals(2, server.connections.size)
         repository.close()
     }
 
@@ -726,10 +837,11 @@ class MpdRepositoryTest {
     }
 
     @Test fun invalidProtocolAndPermissionErrorsNeverRetryAutomatically() = runTest {
-        for (error in listOf(InvalidMpdResponse(), SecurityException())) {
+        for (error in listOf(InvalidMpdResponse(), SecurityException(), MpdAckException(4, 0, "ping"))) {
             val server = FakeServer().apply { connectBlock = { throw error } }
             val repository = MpdRepository(backgroundScope, server::connection)
             repository.connect(first); runCurrent()
+            repository.resumeExhaustedRecovery()
             advanceTimeBy(60_000); runCurrent()
             assertEquals(2, server.connections.size)
             assertFalse(repository.state.value.recovering)

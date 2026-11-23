@@ -54,7 +54,8 @@ class SleepTimerAndroidTest {
     @Test fun scheduleCancelRestoreAndPermissionsUseOnlyOneInexactAlarm() = runBlocking {
         val timer = SleepTimerController(storage, profiles.settings, clock, scheduler, profileMutationLock,
             pause = { error("No delivery") }, playback = { TimerPlayback(target, ConnectionState(ConnectionStatus.CONNECTED,
-                snapshot = MpdSnapshot(MpdStatus(playback = PlaybackState.PLAYING), null, emptyList(), 0))) })
+                snapshot = MpdSnapshot(MpdStatus(playback = PlaybackState.PLAYING), null, emptyList(), 0),
+                idleConnected = true, playerConfirmedAtMillis = clock.elapsed())) })
         timer.setEnabled(true)
         val record = storage.read().record!!
         assertTrue(scheduler.hasPendingIntent())

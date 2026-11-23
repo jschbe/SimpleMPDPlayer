@@ -162,8 +162,7 @@ fun ServersApp(
                     Text(stringResource(R.string.allow_local_network))
                 }
             }
-            if ((!connected || (state.connection.failureSource == com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.IDLE &&
-                    !state.connection.idleConnected)) && state.connection.snapshot != null) {
+            if (!state.connection.livePlayerStatus && state.connection.snapshot != null) {
                 Text(stringResource(R.string.stale_data), modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
             }
             if (!showServers && state.saveFailed) ErrorText(R.string.settings_save_failed)

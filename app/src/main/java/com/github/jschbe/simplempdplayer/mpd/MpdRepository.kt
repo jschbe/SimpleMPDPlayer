@@ -27,7 +27,7 @@ import kotlinx.coroutines.sync.withLock
 
 enum class ConnectionStatus { DISCONNECTED, CONNECTING, CONNECTED, FAILED }
 enum class ConnectionFailureSource { CONNECT, CONTROL, IDLE }
-enum class ConnectionCheckTrigger { FOREGROUND, WINDOW_FOCUS, NETWORK, QUEUE_RETRY }
+enum class ConnectionCheckTrigger { FOREGROUND, WINDOW_FOCUS, NETWORK, QUEUE_RETRY, TIMER }
 enum class ConnectionError {
     REFUSED, UNREACHABLE, TIMEOUT, INVALID_RESPONSE, LOST, MPD_REJECTED, NETWORK, PERMISSION_REQUIRED,
     RESPONSE_LIMIT, QUEUE_CHANGED,
@@ -46,7 +46,17 @@ data class ConnectionState(
     val waitingForNetwork: Boolean = false,
     val idleConnected: Boolean = false,
     val sessionId: Long? = null,
-)
+    val playerConfirmedAtMillis: Long? = null,
+) {
+    private val confirmedPlayerStatus: Boolean
+        get() = status == ConnectionStatus.CONNECTED && !waitingForNetwork &&
+            snapshot != null && playerConfirmedAtMillis != null
+
+    val livePlayerStatus: Boolean get() = confirmedPlayerStatus && idleConnected
+
+    fun hasConfirmedPlayerStatus(nowMillis: Long): Boolean =
+        confirmedPlayerStatus && (idleConnected || nowMillis - requireNotNull(playerConfirmedAtMillis) in 0..5_000)
+}
 
 /** Main-scope owner of two technical connections to exactly one active server. */
 class MpdRepository(
@@ -55,6 +65,7 @@ class MpdRepository(
     private val pingIntervalMillis: Long = 15_000,
     private val nanoTime: () -> Long = System::nanoTime,
     private val diagnostics: (String) -> Unit = {},
+    private val elapsedMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private class Session(val command: MpdConnection, var events: MpdConnection?, val work: Job) {
         val operations = Mutex()
@@ -64,6 +75,7 @@ class MpdRepository(
         var listener: Job? = null
         var heartbeat: Job? = null
         var healthCheck: Job? = null
+        var healthCheckEpoch = -1L
         fun close() {
             closed = true
             command.close()
@@ -81,6 +93,8 @@ class MpdRepository(
     private var session: Session? = null
     private var recoveryJob: Job? = null
     private var generation = 0L
+    private var departureGeneration: Long? = null
+    private var playerStatusEpoch = 0L
     private var nextSessionId = 0L
     // Keep the first recovery readback small after an unfinished range closed the control socket.
     private var queueReadsSuspended = false
@@ -139,7 +153,8 @@ class MpdRepository(
         mutableBrowser.value = BrowserState(generation = browser.value.generation + 1)
         mutableState.update { it.copy(status = ConnectionStatus.CONNECTING, error = null, commandPending = false,
             commandError = null, recovering = true, retryAttempt = 0, retriesExhausted = false,
-            waitingForNetwork = !networkAvailable.value, idleConnected = false, sessionId = null) }
+            waitingForNetwork = !networkAvailable.value, idleConnected = false, sessionId = null,
+            playerConfirmedAtMillis = null) }
         if (networkAvailable.value) startConnection() else scheduleRecovery()
     }
 
@@ -193,7 +208,8 @@ class MpdRepository(
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: IOException) { idleFailed(current, events, classify(error)); return@launch }
                 catch (_: SecurityException) { idleFailed(current, events, ConnectionError.PERMISSION_REQUIRED); return@launch }
-                if (changes.isNotEmpty()) try {
+                try {
+                    if ("player" in changes) invalidatePlayerStatus()
                     current.operations.withLock { refresh(current) }
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: IOException) { fail(current, classify(error)); return@launch }
@@ -217,8 +233,10 @@ class MpdRepository(
         diagnostics("failure generation=$generation source=IDLE category=$error attempt=$retryAttempt")
         events.close()
         current.events = null
+        playerStatusEpoch++
         mutableState.update { it.copy(error = error, failureSource = ConnectionFailureSource.IDLE,
-            idleConnected = false, recovering = retryable(error), waitingForNetwork = !networkAvailable.value) }
+            idleConnected = false, recovering = retryable(error), waitingForNetwork = !networkAvailable.value,
+            playerConfirmedAtMillis = null) }
         scheduleRecovery()
     }
 
@@ -252,13 +270,50 @@ class MpdRepository(
         }.also { it.start() }
     }
 
+    internal fun noteDeparture() {
+        if (departureGeneration == null) departureGeneration = generation
+    }
+
+    internal fun consumeReturn(): Boolean {
+        val departure = departureGeneration ?: return false
+        departureGeneration = null
+        return departure == generation
+    }
+
+    /** Called once for a qualified return, never for an ordinary window focus or network event. */
+    internal fun resumeExhaustedRecovery() {
+        val current = state.value
+        val error = current.error ?: return
+        val repairNeeded = current.status == ConnectionStatus.FAILED ||
+            (current.failureSource == ConnectionFailureSource.IDLE && !current.idleConnected)
+        if (activeServer == null || !repairNeeded || !current.retriesExhausted || current.recovering ||
+            recoveryJob?.isActive == true || !retryable(error) || error == ConnectionError.RESPONSE_LIMIT
+        ) return
+        retryAttempt = 0
+        diagnostics("rearm generation=$generation source=${current.failureSource} offline=${!networkAvailable.value}")
+        mutableState.update { it.copy(recovering = true, retriesExhausted = false, retryAttempt = 0) }
+        scheduleRecovery()
+    }
+
+    internal fun invalidatePlayerStatus() {
+        // An already-started read cannot attest to state after this transition.
+        playerStatusEpoch++
+        mutableState.update { it.copy(playerConfirmedAtMillis = null) }
+    }
+
+    fun confirmTimerPlayback() {
+        if (!state.value.hasConfirmedPlayerStatus(elapsedMillis())) checkConnection(ConnectionCheckTrigger.TIMER)
+    }
+
     /** Connectivity callbacks are hints; LAN-only networks do not need Internet validation. */
     fun networkChanged(available: Boolean) {
         val changed = networkAvailable.value != available
+        if (changed) playerStatusEpoch++
         networkAvailable.value = available
         mutableState.update {
             it.copy(waitingForNetwork = activeServer != null && !available,
-                sessionId = if (changed && it.sessionId != null) ++nextSessionId else it.sessionId)
+                sessionId = if (changed && it.sessionId != null) ++nextSessionId else it.sessionId,
+                playerConfirmedAtMillis = it.playerConfirmedAtMillis.takeUnless { changed })
         }
         if (changed && available) checkConnection(ConnectionCheckTrigger.NETWORK)
     }
@@ -268,15 +323,18 @@ class MpdRepository(
         if (activeServer != null) diagnostics("check generation=$generation trigger=$trigger status=${state.value.status} " +
             "recovering=${state.value.recovering} exhausted=${state.value.retriesExhausted} offline=${!networkAvailable.value}")
         val current = session ?: return
-        if (!isCurrent(current) || state.value.status != ConnectionStatus.CONNECTED ||
-            !networkAvailable.value || current.healthCheck?.isActive == true) return
+        val epoch = playerStatusEpoch
+        if (!isCurrent(current) || state.value.status != ConnectionStatus.CONNECTED || !networkAvailable.value ||
+            (current.healthCheck?.isActive == true && current.healthCheckEpoch == epoch)
+        ) return
+        current.healthCheckEpoch = epoch
         current.healthCheck = scope.launch(current.work) {
             try {
                 current.operations.withLock {
-                    if (!isCurrent(current)) return@withLock
+                    if (!isCurrent(current) || !networkAvailable.value || current.healthCheckEpoch != epoch) return@withLock
                     current.command.ping()
                     if (trigger == ConnectionCheckTrigger.QUEUE_RETRY) queueReadsSuspended = false
-                    refresh(current, forceQueue = true)
+                    refresh(current, forceQueue = trigger != ConnectionCheckTrigger.TIMER)
                     if (isCurrent(current)) diagnostics("checked generation=$generation trigger=$trigger idle=${state.value.idleConnected}")
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -621,6 +679,8 @@ class MpdRepository(
     private suspend fun refresh(current: Session, forceQueue: Boolean = false) {
         if (!isCurrent(current)) return
         val client = current.command
+        val epoch = playerStatusEpoch
+        val startedOnline = networkAvailable.value
         val deadline = nanoTime() + QUEUE_LOAD_NANOS
         var before = readStatus(client)
         val old = state.value.snapshot
@@ -672,7 +732,10 @@ class MpdRepository(
                 nanoTime(), availability)
             mutableState.update { it.copy(status = ConnectionStatus.CONNECTED,
                 error = if (it.failureSource == ConnectionFailureSource.IDLE && !it.idleConnected) it.error else null,
-                snapshot = snapshot) }
+                snapshot = snapshot,
+                playerConfirmedAtMillis = elapsedMillis().takeIf {
+                    startedOnline && networkAvailable.value && epoch == playerStatusEpoch
+                }) }
             return
         }
     }
@@ -683,7 +746,7 @@ class MpdRepository(
         current.close()
         mutableState.update { it.copy(status = ConnectionStatus.FAILED, error = error, commandPending = false,
             failureSource = source, idleConnected = false, recovering = retryable(error), sessionId = null,
-            waitingForNetwork = !networkAvailable.value) }
+            playerConfirmedAtMillis = null, waitingForNetwork = !networkAvailable.value) }
         mutableBrowser.update { it.copy(generation = it.generation + 1, entries = emptyList(), loaded = false, loading = false, error = null) }
         scheduleRecovery()
     }

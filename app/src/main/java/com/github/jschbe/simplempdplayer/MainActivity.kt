@@ -1,12 +1,19 @@
 package com.github.jschbe.simplempdplayer
 
 import android.Manifest
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.content.ContextCompat
 import androidx.core.os.LocaleListCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -43,14 +50,48 @@ class MainActivity : AppCompatActivity() {
         })[ServersViewModel::class.java]
     }
 
+    private val screenEvents = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> if (!getSystemService(PowerManager::class.java).isInteractive) {
+                    model.noteDeparture()
+                }
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT ->
+                    if (hasWindowFocus() && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && canInteract()) {
+                        model.onVisibleReturn()
+                    }
+            }
+        }
+    }
+
+    private fun canInteract(): Boolean = getSystemService(PowerManager::class.java).isInteractive &&
+        !getSystemService(KeyguardManager::class.java).isKeyguardLocked
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        // Focus can precede resume. ON_RESUME checks independently, so neither order loses a check.
-        if (hasFocus && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) model.onWindowFocusGained()
+        // Focus before resume is covered by ON_RESUME. Screen events also cover retained focus.
+        if (hasFocus && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            model.onWindowFocusGained(canReturn = canInteract())
+        }
+    }
+
+    override fun onStop() {
+        if (!isChangingConfigurations) model.noteDeparture()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        unregisterReceiver(screenEvents)
+        super.onDestroy()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ContextCompat.registerReceiver(this, screenEvents, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }, ContextCompat.RECEIVER_NOT_EXPORTED)
         (application as PlayerApplication).streamBackend.refreshLanguage(resources.configuration)
         enableEdgeToEdge()
         setContent {
@@ -81,7 +122,7 @@ class MainActivity : AppCompatActivity() {
                 model.refreshNetworkPermission()
             }
             LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-                model.onForeground()
+                model.onForeground(canReturn = hasWindowFocus() && canInteract())
                 // System -> explicit with the same effective locale need not recreate us.
                 language = currentLanguage()
             }

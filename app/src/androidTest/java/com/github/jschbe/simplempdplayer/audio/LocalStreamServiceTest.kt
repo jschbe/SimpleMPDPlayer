@@ -147,6 +147,8 @@ class LocalStreamServiceTest {
         enable()
         waitFor { app.localStream.state.value.phase == StreamPhase.ACTIVE }
         val controller = controller()
+        fun readyForNextCommand() = !app.repository.state.value.commandPending &&
+            controller.isCommandAvailable(Player.COMMAND_PLAY_PAUSE)
         main {
             assertEquals("Fixture title", controller.mediaMetadata.title.toString())
             assertEquals("Fixture artist", controller.mediaMetadata.artist.toString())
@@ -162,18 +164,18 @@ class LocalStreamServiceTest {
                 Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_SET_VOLUME).forEach { assertFalse(controller.isCommandAvailable(it)) }
             controller.pause()
         }
-        waitFor { !controller.playWhenReady && controller.isCommandAvailable(Player.COMMAND_PLAY_PAUSE) }
+        waitFor { !controller.playWhenReady && readyForNextCommand() }
         assertEquals(listOf("pause \"1\""), fixture.mutations())
         main { controller.play() }
-        waitFor { controller.isPlaying && controller.isCommandAvailable(Player.COMMAND_PLAY_PAUSE) }
+        waitFor { controller.isPlaying && readyForNextCommand() }
         main { controller.seekToNext() }
-        waitFor { fixture.mutations().size == 3 && controller.isCommandAvailable(Player.COMMAND_PLAY_PAUSE) }
+        waitFor { fixture.mutations().size == 3 && readyForNextCommand() }
         main { controller.seekToPrevious() }
-        waitFor { fixture.mutations().size == 4 && controller.isCommandAvailable(Player.COMMAND_PLAY_PAUSE) }
+        waitFor { fixture.mutations().size == 4 && readyForNextCommand() }
         main { controller.seekToNextMediaItem() }
-        waitFor { fixture.mutations().size == 5 && controller.isCommandAvailable(Player.COMMAND_PLAY_PAUSE) }
+        waitFor { fixture.mutations().size == 5 && readyForNextCommand() }
         main { controller.seekToPreviousMediaItem() }
-        waitFor { fixture.mutations().size == 6 && controller.isCommandAvailable(Player.COMMAND_PLAY_PAUSE) }
+        waitFor { fixture.mutations().size == 6 && readyForNextCommand() }
         assertEquals(listOf("pause \"1\"", "pause \"0\"", "next", "previous", "next", "previous"), fixture.mutations())
         main { controller.seekTo(30_000); controller.stop() }
         SystemClock.sleep(250)
@@ -479,7 +481,7 @@ class LocalStreamServiceTest {
         fixture.assertReadOnly()
     }
 
-    @Test fun unlockWithoutActivityRestartRecoversControlAndKeepsTimerAndInactiveServerUntouched() {
+    @Test fun unlockWithoutActivityRestartRearmsExhaustedControlAndKeepsTimerAndInactiveServerUntouched() {
         val other = AudioFixture(instrumentation.context.assets.open("stream-tone.mp3").use { it.readBytes() })
         try {
             val inactive = ServerInput("Inactive unlock fixture", "localhost", other.mpdPort.toString(), other.httpPort.toString()).toProfile()!!
@@ -488,11 +490,31 @@ class LocalStreamServiceTest {
             val record = app.sleepTimer.state.value.settings.record!!
             lateinit var original: MainActivity
             activity!!.onActivity { original = it }
+            fixture.acceptMpd = false
+            fixture.dropControl()
+            main { app.repository.checkConnection() }
+            waitFor(45_000) { app.repository.state.value.retriesExhausted }
+            val exhaustedConnections = fixture.mpdConnections.get()
+            repeat(2) {
+                lateinit var dialog: android.app.Dialog
+                activity!!.onActivity {
+                    dialog = android.app.Dialog(it).apply {
+                        setContentView(android.widget.TextView(it).apply { text = "Focus fixture" })
+                        show()
+                    }
+                }
+                waitFor { !original.hasWindowFocus() }
+                main { dialog.dismiss() }
+                waitFor { original.hasWindowFocus() }
+                SystemClock.sleep(400)
+                assertTrue(app.repository.state.value.retriesExhausted)
+            }
+            assertEquals(exhaustedConnections, fixture.mpdConnections.get())
             shell("input keyevent KEYCODE_SLEEP")
             // Wait for the actual lock transition before waking; shell input returns earlier.
             waitFor { !original.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) &&
                 !original.hasWindowFocus() }
-            fixture.dropControl()
+            fixture.acceptMpd = true
             fixture.title = "Unlock readback title"
             fixture.playback("pause", notify = false)
             shell("input keyevent KEYCODE_WAKEUP")
@@ -500,7 +522,7 @@ class LocalStreamServiceTest {
             waitFor { app.repository.state.value.idleConnected && !app.repository.state.value.recovering &&
                 app.repository.state.value.snapshot?.currentSong?.title == fixture.title }
             activity!!.onActivity { assertSame(original, it) }
-            assertEquals(4, fixture.mpdConnections.get())
+            assertEquals(exhaustedConnections + 2, fixture.mpdConnections.get())
             assertEquals(0, other.mpdConnections.get())
             assertEquals(record, app.sleepTimer.state.value.settings.record)
             assertEquals(fixture.title, app.repository.state.value.snapshot!!.queue.single().song.title)
@@ -508,6 +530,74 @@ class LocalStreamServiceTest {
             assertTrue(other.mutations().isEmpty())
             fixture.assertReadOnly()
         } finally { other.close() }
+    }
+
+    @Test fun foregroundReadbackSeparatesStalePlayFromAConfirmedTimerStart() {
+        waitFor { app.repository.state.value.livePlayerStatus }
+        fixture.acceptMpd = false // Keep the existing control socket healthy while idle repair waits.
+        fixture.dropIdle()
+        waitFor { app.repository.state.value.failureSource ==
+            com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.IDLE && !app.repository.state.value.idleConnected }
+        assertEquals(com.github.jschbe.simplempdplayer.mpd.PlaybackState.PLAYING,
+            app.repository.state.value.snapshot!!.status.playback)
+
+        fixture.playback("pause", notify = false)
+        runBlocking { app.sleepTimer.setEnabled(true); app.sleepTimer.setMinutes(15) }
+        assertTrue(app.sleepTimer.state.value.waiting)
+        assertNull(app.sleepTimer.state.value.settings.record!!.deadline)
+        val statusRead = java.util.concurrent.CountDownLatch(1)
+        fixture.statusGate = statusRead
+        try {
+            val reads = fixture.statusReads.get()
+            activity!!.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+            activity!!.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            waitFor { fixture.statusReads.get() > reads }
+            assertTrue(app.sleepTimer.state.value.waiting)
+            runBlocking { app.sleepTimer.setMinutes(17) }
+            assertNull(app.sleepTimer.state.value.settings.record!!.deadline)
+        } finally {
+            fixture.statusGate = null
+            statusRead.countDown()
+        }
+        waitFor {
+            app.repository.state.value.snapshot?.status?.playback == com.github.jschbe.simplempdplayer.mpd.PlaybackState.PAUSED &&
+                app.repository.state.value.playerConfirmedAtMillis != null
+        }
+        assertTrue(app.sleepTimer.state.value.waiting)
+
+        fixture.playback("play", notify = false)
+        activity!!.onActivity { it.onWindowFocusChanged(true) }
+        waitFor { app.sleepTimer.state.value.active }
+        val record = app.sleepTimer.state.value.settings.record!!
+        assertEquals(17 * 60_000L, record.deadline!! - record.started)
+        assertFalse(app.repository.state.value.livePlayerStatus)
+        runBlocking { app.sleepTimer.refresh() }
+        assertEquals(record, app.sleepTimer.state.value.settings.record)
+
+        // Off wins while another confirmed Playing response is still in flight.
+        runBlocking { app.sleepTimer.setEnabled(false) }
+        fixture.playback("pause", notify = false)
+        main { app.repository.checkConnection() }
+        waitFor { app.repository.state.value.snapshot?.status?.playback ==
+            com.github.jschbe.simplempdplayer.mpd.PlaybackState.PAUSED }
+        runBlocking { app.sleepTimer.setEnabled(true) }
+        assertTrue(app.sleepTimer.state.value.waiting)
+        val lateRead = java.util.concurrent.CountDownLatch(1)
+        fixture.statusGate = lateRead
+        try {
+            fixture.playback("play", notify = false)
+            val reads = fixture.statusReads.get()
+            main { app.repository.checkConnection() }
+            waitFor { fixture.statusReads.get() > reads }
+            runBlocking { app.sleepTimer.setEnabled(false) }
+        } finally {
+            fixture.statusGate = null
+            lateRead.countDown()
+        }
+        waitFor { app.repository.state.value.snapshot?.status?.playback ==
+            com.github.jschbe.simplempdplayer.mpd.PlaybackState.PLAYING }
+        assertFalse(app.sleepTimer.state.value.enabled)
+        fixture.assertReadOnly()
     }
 
     @Test fun switchDuringFocusRecoveryStopsOldChecksAndPreservesOriginalTimerTarget() {

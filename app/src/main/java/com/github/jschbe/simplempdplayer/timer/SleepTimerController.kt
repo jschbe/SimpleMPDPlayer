@@ -2,7 +2,6 @@ package com.github.jschbe.simplempdplayer.timer
 
 import com.github.jschbe.simplempdplayer.data.ServerSettings
 import com.github.jschbe.simplempdplayer.data.ServerProfile
-import com.github.jschbe.simplempdplayer.mpd.ConnectionStatus
 import com.github.jschbe.simplempdplayer.mpd.PlaybackState
 import java.io.IOException
 import java.util.UUID
@@ -120,7 +119,7 @@ class SleepTimerController(
         val current = playback() ?: return false
         return current.server.id == target.id && current.server.host == target.host &&
             current.server.mpdPort == target.mpdPort && current.server.streamPort == target.streamPort &&
-            current.connection.status == ConnectionStatus.CONNECTED && !current.connection.waitingForNetwork &&
+            current.connection.hasConfirmedPlayerStatus(clock.elapsed()) &&
             current.connection.snapshot?.status?.playback == PlaybackState.PLAYING
     }
 

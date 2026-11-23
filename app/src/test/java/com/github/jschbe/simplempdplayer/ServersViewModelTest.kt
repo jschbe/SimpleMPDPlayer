@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModelStore
 import com.github.jschbe.simplempdplayer.data.*
 import com.github.jschbe.simplempdplayer.audio.*
 import com.github.jschbe.simplempdplayer.mpd.*
+import com.github.jschbe.simplempdplayer.timer.*
 import java.io.IOException
 import java.io.EOFException
 import java.net.ConnectException
@@ -312,6 +313,174 @@ class ServersViewModelTest {
         assertNull(f.vm.state.value.connection.error)
     }
 
+    @Test fun oneDepartureAuthorizesOneRecoveryInEitherCallbackOrder() = vmTest {
+        for (focusFirst in listOf(false, true)) {
+            val f = fixture(listOf(first, second), first.id)
+            f.failure = EOFException()
+            runCurrent()
+            advanceTimeBy(31_000); runCurrent()
+            assertTrue(f.vm.state.value.connection.retriesExhausted)
+            repeat(3) {
+                f.vm.onWindowFocusGained(canReturn = true)
+                f.vm.onForeground(canReturn = true)
+                advanceTimeBy(1_000); runCurrent()
+            }
+            assertEquals(12, f.connections.size)
+            f.vm.noteDeparture()
+            f.vm.noteDeparture() // Screen-off and stop can describe the same departure.
+            if (focusFirst) {
+                f.vm.onWindowFocusGained(canReturn = true)
+                f.vm.onForeground(canReturn = true)
+            } else {
+                f.vm.onForeground(canReturn = false)
+                f.vm.onWindowFocusGained(canReturn = true)
+            }
+            assertFalse(f.vm.onVisibleReturn())
+            advanceTimeBy(31_000); runCurrent()
+            assertTrue(f.vm.state.value.connection.retriesExhausted)
+            assertEquals(22, f.connections.size)
+            f.failure = null
+            f.vm.noteDeparture()
+            f.vm.onForeground(canReturn = true)
+            advanceTimeBy(1_000); runCurrent()
+            assertTrue(f.vm.state.value.connection.livePlayerStatus)
+            assertEquals(24, f.connections.size)
+        }
+    }
+
+    @Test fun selectionChangeInvalidatesAnOutstandingDeparture() = vmTest {
+        val f = fixture(listOf(first, second), first.id)
+        runCurrent()
+        f.vm.noteDeparture()
+        f.failure = EOFException()
+        f.vm.select(second); runCurrent()
+        advanceTimeBy(31_000); runCurrent()
+        assertTrue(f.vm.state.value.connection.retriesExhausted)
+        f.vm.onForeground(canReturn = true)
+        f.vm.onWindowFocusGained(canReturn = true)
+        advanceTimeBy(31_000); runCurrent()
+        assertEquals(14, f.connections.size)
+        assertTrue(f.vm.state.value.connection.retriesExhausted)
+    }
+
+    @Test fun foregroundReconciliationCannotStartAWaitingTimerFromPreReturnPlaying() = vmTest {
+        var playback = "pause"
+        val data = MemoryDataStore(mutablePreferencesOf(
+            stringPreferencesKey("server_profiles_v1") to ServerSettingsCodec.encode(listOf(first)),
+            stringPreferencesKey("selected_server_id") to first.id,
+        ))
+        val profiles = ServerSettingsStore(data)
+        val repository = MpdRepository(backgroundScope, {
+            FakeConnection({}, null).apply {
+                statusFields = { listOf("state" to playback, "playlist" to "1", "playlistlength" to "0") }
+            }
+        }, elapsedMillis = { testScheduler.currentTime })
+        val store = object : TimerStorage {
+            val saved = MutableStateFlow(TimerSettings())
+            override val settings = saved.asStateFlow()
+            override suspend fun read() = saved.value
+            override suspend fun write(settings: TimerSettings) { saved.value = settings }
+        }
+        val clock = object : TimerClock {
+            override fun elapsed() = testScheduler.currentTime
+            override fun wallTime() = elapsed()
+            override fun boot() = 1
+        }
+        val alarms = mutableListOf<TimerRecord>()
+        val timer = SleepTimerController(store, profiles.settings, clock, object : TimerScheduler {
+            override fun schedule(record: TimerRecord) { alarms.add(record) }
+            override fun cancel() = Unit
+            override fun hasPendingIntent() = alarms.isNotEmpty()
+        }, Mutex(), pause = { error("Unexpected delivery") },
+            playback = { repository.activeServer?.let { TimerPlayback(it, repository.state.value) } })
+        timer.observe(backgroundScope)
+        val vm = ServersViewModel(profiles, sharedRepository = repository, sleepTimer = timer)
+        models.put("foreground-timer", vm)
+        runCurrent()
+        timer.setEnabled(true); runCurrent()
+        assertTrue(timer.state.value.waiting)
+
+        // The process observer has not delivered this earlier Playing snapshot to the waiting timer.
+        playback = "play"
+        repository.checkConnection(); runCurrent()
+        assertTrue(repository.state.value.livePlayerStatus)
+        assertEquals(PlaybackState.PLAYING, repository.state.value.snapshot!!.status.playback)
+        playback = "pause"
+        vm.onForeground()
+        backgroundScope.launch { repository.state.collect { timer.playbackChanged() } }
+        advanceTimeBy(299); runCurrent()
+        assertNull(repository.state.value.playerConfirmedAtMillis)
+        assertTrue(timer.state.value.waiting)
+        assertTrue(alarms.isEmpty())
+        advanceTimeBy(1); runCurrent()
+        assertEquals(PlaybackState.PAUSED, repository.state.value.snapshot!!.status.playback)
+        assertTrue(timer.state.value.waiting)
+
+        playback = "play"
+        repository.checkConnection(); runCurrent()
+        assertEquals(clock.elapsed() + 30 * 60_000L, alarms.single().deadline)
+        assertTrue(timer.state.value.active)
+        repository.close()
+    }
+
+    @Test fun progressFreezesForOfflineAndIdleLossThenUsesRecoveredPlaybackAndPosition() = vmTest {
+        val connections = mutableListOf<FakeConnection>()
+        val now = { testScheduler.currentTime * 1_000_000 }
+        var playback = "play"
+        var elapsed = "10"
+        var songId = "1"
+        val eventLoss = CompletableDeferred<Unit>()
+        val repository = MpdRepository(backgroundScope, {
+            FakeConnection({}, null).apply {
+                statusFields = { listOf("state" to playback, "playlist" to songId, "playlistlength" to "1",
+                    "elapsed" to elapsed, "songid" to songId) }
+                songFields = { listOf("file" to "track-$songId.flac", "Id" to songId, "Pos" to "0") }
+                if (connections.size == 1) idleBlock = { eventLoss.await(); throw EOFException() }
+            }.also(connections::add)
+        }, nanoTime = now)
+        val vm = ServersViewModel(ServerSettingsStore(MemoryDataStore(mutablePreferencesOf(
+            stringPreferencesKey("server_profiles_v1") to ServerSettingsCodec.encode(listOf(first)),
+            stringPreferencesKey("selected_server_id") to first.id,
+        ))),
+            sharedRepository = repository, nanoTime = now)
+        models.put("progress", vm)
+        runCurrent()
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(11.0, vm.state.value.positionSeconds!!, 0.001)
+        repository.networkChanged(false); runCurrent()
+        advanceTimeBy(4_000); runCurrent()
+        assertEquals(11.0, vm.state.value.positionSeconds!!, 0.001)
+
+        elapsed = "20"
+        repository.networkChanged(true); runCurrent()
+        assertEquals(20.0, vm.state.value.positionSeconds!!, 0.001)
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(21.0, vm.state.value.positionSeconds!!, 0.001)
+        eventLoss.complete(Unit); runCurrent()
+        advanceTimeBy(500); runCurrent()
+        assertEquals(21.0, vm.state.value.positionSeconds!!, 0.001)
+        elapsed = "30"
+        repository.confirmTimerPlayback(); runCurrent()
+        assertEquals(30.0, vm.state.value.positionSeconds!!, 0.001)
+        assertFalse(vm.state.value.connection.livePlayerStatus)
+        advanceTimeBy(500); runCurrent()
+        assertTrue(vm.state.value.connection.livePlayerStatus)
+        advanceTimeBy(500); runCurrent()
+        assertEquals(30.5, vm.state.value.positionSeconds!!, 0.001)
+
+        for ((state, position) in listOf("pause" to "31", "stop" to "0", "play" to "4")) {
+            playback = state
+            elapsed = position
+            if (state == "play") songId = "2"
+            repository.checkConnection(); runCurrent()
+            assertEquals(songId.toLong(), vm.state.value.connection.snapshot!!.currentSong!!.id)
+            assertEquals(position.toDouble(), vm.state.value.positionSeconds!!, 0.001)
+            advanceTimeBy(500); runCurrent()
+            assertEquals(position.toDouble() + if (state == "play") 0.5 else 0.0, vm.state.value.positionSeconds!!, 0.001)
+        }
+        repository.close()
+    }
+
     @Test fun switchingDiscardsQueuedFocusChecksAndOldRecoveryErrors() = vmTest {
         val f = fixture(listOf(first, second), first.id)
         runCurrent()
@@ -427,14 +596,24 @@ class ServersViewModelTest {
         var pings = 0
         var pingFailure: IOException? = null
         var pingGate: suspend () -> Unit = {}
+        var idleBlock: suspend () -> Set<String> = { awaitCancellation() }
+        var songFields: () -> List<Pair<String, String>> = { emptyList() }
+        var statusFields: () -> List<Pair<String, String>> = {
+            listOf("state" to "stop", "playlist" to "1", "playlistlength" to "0")
+        }
         val commands = mutableListOf<String>()
         override suspend fun connect(host: String, port: Int) { gate(); failure?.let { throw it } }
         override suspend fun ping() { pings++; pingGate(); pingFailure?.let { throw it } }
         override suspend fun execute(name: String, vararg arguments: String): List<Pair<String, String>> {
             commands.add(name)
-            return if (name == "status") listOf("state" to "stop", "playlist" to "1", "playlistlength" to "0") else emptyList()
+            return when (name) {
+                "status" -> statusFields()
+                "playlistinfo" -> { check(arguments.single() == "0:1"); songFields() }
+                "currentsong" -> songFields()
+                else -> emptyList()
+            }
         }
-        override suspend fun idle(): Set<String> = awaitCancellation()
+        override suspend fun idle(): Set<String> = idleBlock()
         override fun close() { closed = true }
     }
 

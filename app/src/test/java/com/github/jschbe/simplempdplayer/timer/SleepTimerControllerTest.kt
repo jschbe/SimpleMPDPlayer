@@ -51,7 +51,8 @@ class SleepTimerControllerTest {
         val targets = mutableListOf<ServerProfile>()
         var deliver: suspend () -> TimerError? = { null }
         var playback: TimerPlayback? = TimerPlayback(first, ConnectionState(ConnectionStatus.CONNECTED,
-            snapshot = MpdSnapshot(MpdStatus(playback = PlaybackState.PLAYING), null, emptyList(), 0)))
+            snapshot = MpdSnapshot(MpdStatus(playback = PlaybackState.PLAYING), null, emptyList(), 0),
+            idleConnected = true, playerConfirmedAtMillis = 100_000))
         fun controller() = SleepTimerController(store, profiles, clock, scheduler, lock, pause = { targets.add(it); deliver() }, playback = { playback })
         val timer = controller()
         suspend fun start(minutes: Int = 30): TimerRecord {
@@ -63,7 +64,8 @@ class SleepTimerControllerTest {
 
     private fun confirmed(playback: PlaybackState, server: ServerProfile = first,
         connection: ConnectionStatus = ConnectionStatus.CONNECTED) = TimerPlayback(server,
-        ConnectionState(connection, snapshot = MpdSnapshot(MpdStatus(playback = playback), null, emptyList(), 0)))
+        ConnectionState(connection, snapshot = MpdSnapshot(MpdStatus(playback = playback), null, emptyList(), 0),
+            idleConnected = true, playerConfirmedAtMillis = 100_000))
 
     @Test fun enablingWithoutConfirmedPlayWaitsWithoutDeadlineOrAlarm() = runTest {
         for (status in listOf(PlaybackState.PAUSED, PlaybackState.STOPPED, PlaybackState.UNKNOWN)) {
@@ -84,6 +86,34 @@ class SleepTimerControllerTest {
         }
         val f = Fixture(); f.playback = null
         assertEquals(TimerStatus.WAITING, f.start().status)
+    }
+
+    @Test fun idleLossAndOldSingleReadRemainWaitingUntilAConfirmedPlayingRead() = runTest {
+        val f = Fixture()
+        val playing = confirmed(PlaybackState.PLAYING)
+        f.playback = playing.copy(connection = playing.connection.copy(
+            idleConnected = false, failureSource = ConnectionFailureSource.IDLE, playerConfirmedAtMillis = null))
+        assertEquals(TimerStatus.WAITING, f.start().status)
+        f.timer.setMinutes(15)
+        assertNull(f.store.read().record!!.deadline)
+        assertTrue(f.scheduler.registrations.isEmpty())
+
+        val singleRead = f.playback!!.connection.copy(playerConfirmedAtMillis = f.clock.now)
+        f.clock.now += 5_001
+        f.playback = playing.copy(connection = singleRead)
+        f.timer.playbackChanged()
+        assertTrue(f.timer.state.value.waiting)
+
+        f.playback = playing.copy(connection = singleRead.copy(playerConfirmedAtMillis = f.clock.now,
+            snapshot = singleRead.snapshot!!.copy(queueAvailability = QueueAvailability.LIMIT)))
+        f.timer.playbackChanged()
+        val active = f.store.read().record!!
+        assertEquals(f.clock.now + 15 * 60_000L, active.deadline)
+        f.playback = null
+        f.timer.refresh()
+        f.timer.playbackChanged()
+        assertEquals(active, f.store.read().record)
+        assertEquals(1, f.scheduler.registrations.size)
     }
 
     @Test fun externalPlayStartsFullDurationOnceAndSubsequentStatesDoNotMoveDeadline() = runTest {

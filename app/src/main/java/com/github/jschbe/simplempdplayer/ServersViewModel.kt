@@ -53,6 +53,7 @@ class ServersViewModel(
     private val sharedRepository: MpdRepository? = null,
     private val localStream: LocalStreamController? = null,
     private val sleepTimer: SleepTimerController? = null,
+    private val nanoTime: () -> Long = System::nanoTime,
 ) : ViewModel() {
     private val repository = sharedRepository ?: MpdRepository(viewModelScope, connectionFactory)
     private val mutableState = MutableStateFlow(ServersUiState())
@@ -89,7 +90,16 @@ class ServersViewModel(
         viewModelScope.launch {
             repository.state.collectLatest { connection ->
                 val snapshot = connection.snapshot
-                mutableState.update { it.copy(connection = connection, positionSeconds = snapshot?.status?.elapsed) }
+                mutableState.update {
+                    val position = when {
+                        snapshot == null -> null
+                        connection.livePlayerStatus -> snapshot.positionAt(nanoTime())
+                        connection.playerConfirmedAtMillis != null && snapshot !== it.connection.snapshot ->
+                            snapshot.status.elapsed
+                        else -> it.positionSeconds ?: snapshot.status.elapsed
+                    }
+                    it.copy(connection = connection, positionSeconds = position)
+                }
                 pendingConnectionNotice?.let { token ->
                     val message = when (connection.status) {
                         ConnectionStatus.CONNECTED -> NoticeMessage.CONNECTED
@@ -101,13 +111,12 @@ class ServersViewModel(
                         if (token == noticeToken) mutableNotices.tryEmit(UiNotice(token, message))
                     }
                 }
-                if (connection.status == ConnectionStatus.CONNECTED && snapshot != null) {
-                    mutableState.update { it.copy(positionSeconds = snapshot.positionAt(System.nanoTime())) }
-                    if (snapshot.status.playback == PlaybackState.PLAYING) {
-                        while (isActive) {
-                            delay(500)
-                            mutableState.update { it.copy(positionSeconds = snapshot.positionAt(System.nanoTime())) }
-                        }
+                if (connection.livePlayerStatus && snapshot?.status?.playback == PlaybackState.PLAYING) {
+                    while (isActive) {
+                        delay(500)
+                        // The collector may be rescheduled after a network/freshness transition.
+                        if (repository.state.value !== connection) break
+                        mutableState.update { it.copy(positionSeconds = snapshot.positionAt(nanoTime())) }
                     }
                 }
             }
@@ -231,13 +240,29 @@ class ServersViewModel(
         else connect(mutableState.value.activeServer)
     }
 
-    fun onForeground() {
+    fun noteDeparture() = repository.noteDeparture()
+
+    fun onForeground(canReturn: Boolean = false) {
         refreshNetworkPermission()
-        refreshSleepTimer()
-        requestConnectionCheck(ConnectionCheckTrigger.FOREGROUND)
+        refreshAfterReturn(canReturn && repository.consumeReturn())
     }
 
-    fun onWindowFocusGained() = requestConnectionCheck(ConnectionCheckTrigger.WINDOW_FOCUS)
+    fun onVisibleReturn(): Boolean {
+        if (!repository.consumeReturn()) return false
+        refreshAfterReturn(rearmRecovery = true)
+        return true
+    }
+
+    private fun refreshAfterReturn(rearmRecovery: Boolean) {
+        repository.invalidatePlayerStatus()
+        if (rearmRecovery) repository.resumeExhaustedRecovery()
+        requestConnectionCheck(ConnectionCheckTrigger.FOREGROUND)
+        refreshSleepTimer()
+    }
+
+    fun onWindowFocusGained(canReturn: Boolean = false) {
+        if (!canReturn || !onVisibleReturn()) requestConnectionCheck(ConnectionCheckTrigger.WINDOW_FOCUS)
+    }
 
     private fun requestConnectionCheck(trigger: ConnectionCheckTrigger) {
         if (foregroundCheckJob?.isActive == true) return
@@ -251,8 +276,25 @@ class ServersViewModel(
         }
     }
 
-    fun setSleepEnabled(enabled: Boolean) { viewModelScope.launch { sleepTimer?.setEnabled(enabled) } }
-    fun setSleepMinutes(minutes: Int) { viewModelScope.launch { sleepTimer?.setMinutes(minutes) } }
+    fun setSleepEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            sleepTimer?.setEnabled(enabled)
+            if (enabled) confirmWaitingTimerPlayback()
+        }
+    }
+
+    fun setSleepMinutes(minutes: Int) {
+        viewModelScope.launch {
+            sleepTimer?.setMinutes(minutes)
+            confirmWaitingTimerPlayback()
+        }
+    }
+
+    private fun confirmWaitingTimerPlayback() {
+        val timer = sleepTimer?.state?.value ?: return
+        val target = timer.settings.record?.target ?: return
+        if (timer.waiting && target.endpoint() == repository.activeServer?.endpoint()) repository.confirmTimerPlayback()
+    }
     fun refreshSleepTimer() { sleepTimer?.retry() }
 
     fun setLocalListening(enabled: Boolean) {
