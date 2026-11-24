@@ -2,6 +2,7 @@ package com.github.jschbe.simplempdplayer
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -291,6 +292,122 @@ class ServersViewModelTest {
         assertEquals(pings + 1, connections.first().pings)
         assertEquals(2, connections.size)
         assertEquals(first.id, vm.state.value.activeServer!!.id)
+        repository.close()
+    }
+
+    @Test fun readFailureRetainsSettingsAndHealthySocketsAndAudioUntilActualDeselection() = vmTest {
+        var stops = 0
+        val stream = LocalStreamController(object : StreamBackend {
+            override fun start(generation: Long) = Unit
+            override fun stop() { stops++ }
+        })
+        val f = fixture(listOf(first, second), first.id, stream)
+        runCurrent()
+        f.vm.reorder(listOf(second.id, first.id))
+        runCurrent()
+        f.vm.setTheme(ThemeMode.DARK)
+        runCurrent()
+        f.vm.setTrackInfoExpanded(false)
+        runCurrent()
+        f.vm.setLocalListening(true)
+        runCurrent()
+        val confirmed = f.vm.state.value.settings
+        val request = requireNotNull(stream.request.value)
+        val connection = f.vm.state.value.connection
+        val previousStops = stops
+        val writes = f.data.writes
+
+        f.data.failReads.value = true
+        runCurrent()
+        val failed = f.vm.state.value
+        assertEquals(confirmed.copy(readFailed = true), failed.settings)
+        assertEquals(first, failed.activeServer)
+        assertFalse(failed.settingsEditable)
+        assertEquals(connection, failed.connection)
+        assertTrue(failed.connection.livePlayerStatus)
+        assertTrue(failed.localStream.enabled)
+        assertEquals(request, stream.request.value)
+        assertEquals(previousStops, stops)
+        assertEquals(2, f.connections.size)
+        assertTrue(f.connections.none { it.closed })
+
+        f.vm.select(second)
+        f.vm.delete(first)
+        f.vm.reorder(listOf(first.id, second.id))
+        f.vm.setTheme(ThemeMode.LIGHT)
+        f.vm.setTrackInfoExpanded(true)
+        f.vm.save(second)
+        runCurrent()
+        assertEquals(writes, f.data.writes)
+
+        f.data.failReads.value = false
+        runCurrent()
+        assertTrue(f.vm.state.value.settings.readFailed)
+        f.vm.reloadSettings()
+        f.vm.reloadSettings()
+        runCurrent()
+        assertEquals(1, f.data.activeReaders)
+        assertEquals(confirmed, f.vm.state.value.settings)
+        assertTrue(f.vm.state.value.settingsEditable)
+        assertEquals(request, stream.request.value)
+        assertEquals(2, f.connections.size)
+        f.vm.delete(first)
+        runCurrent()
+        assertEquals(writes + 1, f.data.writes)
+        assertEquals(listOf(second), f.vm.state.value.settings.servers)
+        assertNull(f.vm.state.value.activeServer)
+        assertEquals(ConnectionStatus.DISCONNECTED, f.vm.state.value.connection.status)
+        assertTrue(f.connections.all { it.closed })
+        assertFalse(stream.state.value.enabled)
+    }
+
+    @Test fun coldReadFailureKeepsSetupClosedUntilAConfirmedEmptyReload() = vmTest {
+        val f = fixture()
+        f.data.failReads.value = true
+        runCurrent()
+        assertTrue(f.vm.state.value.settings.readFailed)
+        assertFalse(f.vm.state.value.loading)
+        assertNull(f.vm.state.value.editor)
+        assertTrue(f.connections.isEmpty())
+        f.data.failReads.value = false
+        f.vm.reloadSettings()
+        runCurrent()
+        assertTrue(f.vm.state.value.settingsEditable)
+        assertNotNull(f.vm.state.value.editor)
+        assertTrue(f.connections.isEmpty())
+    }
+
+    @Test fun failedInitialReadAdoptsTheProcessSessionUntilReloadConfirmsNoSelection() = vmTest {
+        val connections = mutableListOf<FakeConnection>()
+        val repository = MpdRepository(backgroundScope, { FakeConnection({}, null).also(connections::add) })
+        repository.connect(first)
+        runCurrent()
+        val data = MemoryDataStore(mutablePreferencesOf(
+            stringPreferencesKey("server_profiles_v1") to ServerSettingsCodec.encode(listOf(first)),
+            booleanPreferencesKey("track_info_expanded") to false,
+        ))
+        data.failReads.value = true
+        val vm = ServersViewModel(ServerSettingsStore(data), sharedRepository = repository)
+        models.put("adopted", vm)
+        val pings = connections.first().pings
+        vm.onForeground()
+        advanceTimeBy(300)
+        runCurrent()
+        assertEquals(pings + 1, connections.first().pings)
+        assertTrue(vm.state.value.settings.readFailed)
+        assertEquals(first, vm.state.value.activeServer)
+        assertTrue(vm.state.value.settings.servers.isEmpty())
+        assertNull(vm.state.value.editor)
+        assertTrue(connections.none { it.closed })
+
+        data.failReads.value = false
+        vm.reloadSettings()
+        runCurrent()
+        assertNull(vm.state.value.activeServer)
+        assertNull(repository.activeServer)
+        assertEquals(listOf(first), vm.state.value.settings.servers)
+        assertFalse(vm.state.value.settings.trackInfoExpanded)
+        assertTrue(connections.all { it.closed })
         repository.close()
     }
 
@@ -618,12 +735,28 @@ class ServersViewModelTest {
     }
 
     private class MemoryDataStore(initial: Preferences = emptyPreferences()) : DataStore<Preferences> {
-        override val data = MutableStateFlow(initial)
+        private val preferences = MutableStateFlow(initial)
+        val failReads = MutableStateFlow(false)
         var failWrites = false
+        var writes = 0
+            private set
+        var activeReaders = 0
+            private set
+        override val data = flow {
+            activeReaders++
+            try {
+                emitAll(combine(preferences, failReads) { value, failed ->
+                    if (failed) throw IOException("Read failed")
+                    value
+                })
+            } finally {
+                activeReaders--
+            }
+        }
         private val mutex = Mutex()
         override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences = mutex.withLock {
             if (failWrites) throw IOException("Write failed")
-            transform(data.value).also { data.value = it }
+            transform(preferences.value).also { preferences.value = it; writes++ }
         }
     }
 }

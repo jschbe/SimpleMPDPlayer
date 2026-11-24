@@ -17,6 +17,7 @@
     </plurals>
     <string name="timer_custom_option">Custom…</string>
     <string name="timer_custom_done_hint">Press Done to apply the duration. This does not turn the timer on.</string>
+    <string name="timer_changes_unavailable">Timer changes are temporarily unavailable.</string>
     <string name="timer_waiting_hint">Waiting starts the full countdown when this app next observes this server playing. A start while the app is closed or another server is selected may only be detected after returning or reconnecting.</string>
     <string name="track_info_expand">Expand track information</string>
     <string name="track_info_collapse">Collapse track information</string>
@@ -151,12 +152,8 @@
     <string name="host_not_reachable">Host not reachable. Check the host and your network.</string>
     <string name="connection_timed_out">Connection timed out. Check the server and try again.</string>
     <string name="invalid_mpd_response">Invalid MPD response. Check that this is an MPD endpoint.</string>
-    <string name="connection_recovering">Automatic recovery · %1$d of 5 retries used</string>
+    <string name="reconnecting">Reconnecting…</string>
     <string name="connection_waiting_network">Network unavailable</string>
-    <string name="connection_retries_exhausted">Automatic recovery stopped after 5 retries. Tap Reconnect to try again.</string>
-    <string name="connection_source_connect">MPD connection setup failed</string>
-    <string name="connection_source_control">MPD control connection interrupted</string>
-    <string name="connection_source_idle">Live MPD updates interrupted; the control connection is retained</string>
     <string name="connection_lost">Connection lost. Check the server and network.</string>
     <string name="mpd_rejected">MPD rejected the command. Check server permissions or whether the selected track is still available. Password authentication is not supported yet.</string>
     <string name="network_error">Network error. Check your connection and try again.</string>

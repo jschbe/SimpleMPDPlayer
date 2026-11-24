@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.github.jschbe.simplempdplayer.audio.LocalStreamController
 import com.github.jschbe.simplempdplayer.audio.StreamState
+import com.github.jschbe.simplempdplayer.timer.MAX_SLEEP_MINUTES
 import com.github.jschbe.simplempdplayer.timer.SleepTimerController
 import com.github.jschbe.simplempdplayer.timer.SleepTimerState
 import com.github.jschbe.simplempdplayer.data.ServerProfile
@@ -41,9 +42,13 @@ data class ServersUiState(
     val browser: BrowserState = BrowserState(),
     val localStream: StreamState = StreamState(),
     val sleepTimer: SleepTimerState = SleepTimerState(),
+    val sessionServer: ServerProfile? = null,
 ) {
+    val settingsEditable: Boolean get() = !loading && !saving && !settings.readFailed
+
     val activeServer: ServerProfile?
         get() = settings.servers.find { it.id == settings.selectedId }
+            ?: sessionServer.takeIf { loading || settings.readFailed }
 }
 
 class ServersViewModel(
@@ -56,7 +61,7 @@ class ServersViewModel(
     private val nanoTime: () -> Long = System::nanoTime,
 ) : ViewModel() {
     private val repository = sharedRepository ?: MpdRepository(viewModelScope, connectionFactory)
-    private val mutableState = MutableStateFlow(ServersUiState())
+    private val mutableState = MutableStateFlow(ServersUiState(sessionServer = repository.activeServer))
     val state = mutableState.asStateFlow()
     private val mutableNotices = MutableSharedFlow<UiNotice>(extraBufferCapacity = 4)
     val notices = mutableNotices.asSharedFlow()
@@ -98,7 +103,7 @@ class ServersViewModel(
                             snapshot.status.elapsed
                         else -> it.positionSeconds ?: snapshot.status.elapsed
                     }
-                    it.copy(connection = connection, positionSeconds = position)
+                    it.copy(connection = connection, positionSeconds = position, sessionServer = repository.activeServer)
                 }
                 pendingConnectionNotice?.let { token ->
                     val message = when (connection.status) {
@@ -133,30 +138,38 @@ class ServersViewModel(
         mutableState.update { it.copy(editor = it.editor?.copy(testing = false)) }
     }
 
-    fun reloadSettings() = observeSettings()
+    fun reloadSettings() {
+        val current = state.value
+        if (current.settings.readFailed && !current.loading && !current.saving) observeSettings()
+    }
 
     private fun observeSettings() {
         settingsJob?.cancel()
         mutableState.update { it.copy(loading = true) }
         settingsJob = viewModelScope.launch {
             store.settings.collect { settings ->
-                applySettings(settings)
-                if (!writingSettings) synchronizeConnection()
+                val recovered = state.value.settings.readFailed && !settings.readFailed
+                if (applySettings(settings) && !writingSettings) synchronizeConnection()
+                if (recovered) refreshSleepTimer()
             }
         }
     }
 
-    private fun applySettings(settings: ServerSettings) {
-        mutableState.update { it.copy(settings = settings, loading = false) }
-        if (!settings.readFailed) {
-            val empty = settings.servers.isEmpty()
-            val enteredEmpty = empty && wasEmpty != true
-            wasEmpty = empty
-            if (enteredEmpty && mutableState.value.editor == null) openEditor()
+    private fun applySettings(settings: ServerSettings): Boolean {
+        if (settings.readFailed) {
+            mutableState.update { it.copy(settings = it.settings.copy(readFailed = true), loading = false) }
+            return false
         }
+        mutableState.update { it.copy(settings = settings, loading = false) }
+        val empty = settings.servers.isEmpty()
+        val enteredEmpty = empty && wasEmpty != true
+        wasEmpty = empty
+        if (enteredEmpty && mutableState.value.editor == null) openEditor()
+        return true
     }
 
     private fun synchronizeConnection() {
+        if (!state.value.settingsEditable) return
         val selected = mutableState.value.activeServer
         if (desiredEndpoint != selected?.endpoint()) connect(selected)
     }
@@ -206,7 +219,7 @@ class ServersViewModel(
         invalidate: Boolean = true,
         action: suspend () -> Unit,
     ) {
-        if (mutableState.value.saving || mutableState.value.loading || mutableState.value.settings.readFailed) return
+        if (!state.value.settingsEditable) return
         if (invalidate) invalidateNotices()
         val token = noticeToken
         writingSettings = true
@@ -214,15 +227,14 @@ class ServersViewModel(
         viewModelScope.launch {
             try {
                 action()
-                applySettings(store.settings.first())
-                if (afterSave != null) {
+                if (refreshWrittenSettings() && afterSave != null) {
                     mutableState.update { it.copy(editor = null) }
                     // The observer is suppressed during this atomic write, including same-endpoint edits.
                     connect(afterSave, notifyToken = token)
                 }
             } catch (_: DuplicateServerNameException) {
                 // Refresh the editor's name validation if another write won the race to save.
-                applySettings(store.settings.first())
+                refreshWrittenSettings()
             } catch (_: IOException) {
                 mutableState.update { it.copy(saveFailed = true) }
             } finally {
@@ -233,11 +245,20 @@ class ServersViewModel(
         }
     }
 
+    private suspend fun refreshWrittenSettings(): Boolean {
+        if (state.value.settings.readFailed) return false
+        val settings = store.settings.first()
+        return !state.value.settings.readFailed && applySettings(settings)
+    }
+
     fun reconnect() {
         foregroundCheckJob?.cancel()
         invalidateNotices()
-        if (repository.activeServer == mutableState.value.activeServer && networkPermission()) repository.reconnect()
-        else connect(mutableState.value.activeServer)
+        val current = state.value
+        val server = if (current.loading || current.settings.readFailed) repository.activeServer else current.activeServer
+        if (server == null) return
+        if (repository.activeServer == server && networkPermission()) repository.reconnect()
+        else connect(server)
     }
 
     fun noteDeparture() = repository.noteDeparture()
@@ -277,17 +298,21 @@ class ServersViewModel(
     }
 
     fun setSleepEnabled(enabled: Boolean) {
+        if (!state.value.settingsEditable || sleepTimer?.state?.value?.editable != true) return
         viewModelScope.launch {
-            sleepTimer?.setEnabled(enabled)
+            sleepTimer.setEnabled(enabled)
             if (enabled) confirmWaitingTimerPlayback()
         }
     }
 
-    fun setSleepMinutes(minutes: Int) {
+    fun setSleepMinutes(minutes: Int): Boolean {
+        if (minutes !in 1..MAX_SLEEP_MINUTES || !state.value.settingsEditable ||
+            sleepTimer?.state?.value?.editable != true) return false
         viewModelScope.launch {
-            sleepTimer?.setMinutes(minutes)
+            sleepTimer.setMinutes(minutes)
             confirmWaitingTimerPlayback()
         }
+        return true
     }
 
     private fun confirmWaitingTimerPlayback() {

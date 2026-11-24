@@ -17,8 +17,10 @@ import com.github.jschbe.simplempdplayer.ServersViewModel
 import com.github.jschbe.simplempdplayer.data.*
 import com.github.jschbe.simplempdplayer.mpd.MpdConnection
 import com.github.jschbe.simplempdplayer.ui.theme.SimpleMPDPlayerTheme
+import java.io.IOException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.junit.Assert.*
@@ -39,6 +41,7 @@ class ServerUiTest {
     private val connections = mutableListOf<FakeConnection>()
     private var dark = false
     private var systemDark = false
+    private val failReads = MutableStateFlow(false)
 
     @Before fun visibleWindow() {
         compose.activityRule.scenario.onActivity {
@@ -53,10 +56,14 @@ class ServerUiTest {
         val initial = mutablePreferencesOf(stringPreferencesKey("server_profiles_v1") to ServerSettingsCodec.encode(profiles))
         selected?.let { initial[stringPreferencesKey("selected_server_id")] = it }
         val data = object : DataStore<Preferences> {
-            override val data = MutableStateFlow<Preferences>(initial)
+            private val preferences = MutableStateFlow<Preferences>(initial)
+            override val data = combine(preferences, failReads) { stored, failed ->
+                if (failed) throw IOException("Test read failure")
+                stored
+            }
             private val mutex = Mutex()
             override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = mutex.withLock {
-                transform(data.value).also { data.value = it }
+                transform(preferences.value).also { preferences.value = it }
             }
         }
         compose.runOnUiThread {
@@ -95,6 +102,42 @@ class ServerUiTest {
         servers()
         compose.onNodeWithContentDescription("Add server").performClick()
         compose.onNodeWithText("Test").assertIsDisplayed()
+    }
+
+    @Test fun coldReadFailureShowsRetryAndWaitsForConfirmedSetup() {
+        failReads.value = true
+        show()
+        compose.onNodeWithText("Could not load saved servers. Retry to load them again.").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Add server").assertIsNotEnabled()
+        compose.onNodeWithText("Test").assertDoesNotExist()
+        compose.runOnIdle {
+            assertTrue(connections.isEmpty())
+            failReads.value = false
+        }
+        compose.onNodeWithText("Retry").performClick()
+        compose.onNodeWithText("Test").assertIsDisplayed()
+        compose.onNodeWithText("Could not load saved servers. Retry to load them again.").assertDoesNotExist()
+    }
+
+    @Test fun readFailureRetainsServerAndDisablesPersistentEditsUntilRetry() {
+        show(listOf(first, second), first.id)
+        compose.onNodeWithText("Connected").assertIsDisplayed()
+        compose.runOnIdle { failReads.value = true }
+        compose.onNodeWithTag("server_dropdown").assertIsNotEnabled()
+        compose.onNodeWithText("Connected").assertIsDisplayed()
+        compose.onNodeWithTag("track_info_toggle").assertIsNotEnabled()
+        servers()
+        compose.onNodeWithText("Could not load saved servers. Retry to load them again.").assertIsDisplayed()
+        compose.onNodeWithTag("edit_server_${first.id}").assertIsNotEnabled()
+        compose.onNodeWithTag("delete_server_${first.id}").assertIsNotEnabled()
+        compose.onNodeWithTag("server_row_${second.id}").assertIsDisplayed()
+        compose.runOnIdle { failReads.value = false }
+        compose.onNodeWithText("Retry").performClick()
+        compose.onNodeWithTag("edit_server_${first.id}").assertIsEnabled()
+        compose.runOnIdle {
+            assertEquals(2, connections.size)
+            assertTrue(connections.none { it.closed })
+        }
     }
 
     @Test fun dialogValidatesProbeDoesNotSaveAndSaveActivates() {

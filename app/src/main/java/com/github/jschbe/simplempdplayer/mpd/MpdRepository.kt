@@ -47,6 +47,7 @@ data class ConnectionState(
     val idleConnected: Boolean = false,
     val sessionId: Long? = null,
     val playerConfirmedAtMillis: Long? = null,
+    val commandErrorFromQueue: Boolean = false,
 ) {
     private val confirmedPlayerStatus: Boolean
         get() = status == ConnectionStatus.CONNECTED && !waitingForNetwork &&
@@ -364,7 +365,7 @@ class MpdRepository(
         if (!isCurrent(current) || state.value.status != ConnectionStatus.CONNECTED ||
             state.value.commandPending || !networkAvailable.value || !authorized()
         ) return null
-        mutableState.update { it.copy(commandPending = true, commandError = null) }
+        mutableState.update { it.copy(commandPending = true, commandError = null, commandErrorFromQueue = queueContext != null) }
         return scope.launch(current.work) {
             try {
                 current.operations.withLock {

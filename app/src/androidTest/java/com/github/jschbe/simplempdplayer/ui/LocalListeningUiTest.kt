@@ -19,6 +19,8 @@ class LocalListeningUiTest {
     private val server = ServerInput("Test", "localhost").toProfile()!!
     private val listening = mutableListOf<Boolean>()
     private val commands = mutableListOf<PlayerAction>()
+    private var reconnects = 0
+    private var permissionRequests = 0
     private val state = mutableStateOf(ServersUiState(
         loading = false, settings = ServerSettings(listOf(server), server.id),
         connection = ConnectionState(ConnectionStatus.CONNECTED),
@@ -30,7 +32,7 @@ class LocalListeningUiTest {
         }
         compose.setContent {
             SimpleMPDPlayerTheme {
-                ServersApp(state.value, {}, {}, {}, {}, {}, {}, {}, {}, {}, commands::add,
+                ServersApp(state.value, {}, {}, {}, {}, {}, {}, { reconnects++ }, {}, { permissionRequests++ }, commands::add,
                     onLocalListening = listening::add)
             }
         }
@@ -54,19 +56,62 @@ class LocalListeningUiTest {
         compose.runOnIdle { assertEquals(listOf(true, false, true), listening); assertTrue(commands.isEmpty()) }
     }
 
-    @Test fun exhaustedIdleRecoveryShowsClearErrorAndRetainsManualReconnect() {
-        state.value = state.value.copy(connection = ConnectionState(ConnectionStatus.CONNECTED,
-            error = ConnectionError.LOST, failureSource = ConnectionFailureSource.IDLE,
-            retryAttempt = 5, retriesExhausted = true))
+    @Test fun compactStatusShowsProgressDuringSetupAndRecoveryUntilExhaustion() {
+        state.value = state.value.copy(connection = ConnectionState(ConnectionStatus.CONNECTING))
         show()
-        compose.onNodeWithText("Automatic recovery stopped after 5 retries. Tap Reconnect to try again.").assertIsDisplayed()
-        compose.onNodeWithText("Reconnect").assertIsEnabled()
-        compose.onNodeWithText("Live MPD updates interrupted; the control connection is retained").assertIsDisplayed()
-        compose.runOnIdle {
-            state.value = state.value.copy(connection = state.value.connection.copy(recovering = true,
-                retriesExhausted = false, waitingForNetwork = true))
-        }
+        val row = compose.onNodeWithTag("connection_status_row")
+        val spinner = compose.onNodeWithTag("connection_progress")
+        val height = row.getUnclippedBoundsInRoot().run { bottom - top }
+        compose.onNodeWithText("Connecting…").assertIsDisplayed()
+        spinner.assertIsDisplayed()
+
+        val idleFailure = ConnectionState(ConnectionStatus.CONNECTED,
+            error = ConnectionError.LOST, failureSource = ConnectionFailureSource.IDLE,
+            retryAttempt = 2, recovering = true)
+        compose.runOnIdle { state.value = state.value.copy(connection = idleFailure) }
+        compose.onNodeWithText("Reconnecting…").assertIsDisplayed()
+        spinner.assertIsDisplayed()
+        compose.onNodeWithText("Reconnect").assertDoesNotExist()
+        compose.runOnIdle { state.value = state.value.copy(connection = idleFailure.copy(waitingForNetwork = true)) }
         compose.onNodeWithText("Network unavailable").assertIsDisplayed()
+        spinner.assertIsDisplayed()
+
+        compose.runOnIdle { state.value = state.value.copy(connection = idleFailure.copy(
+            recovering = false, retryAttempt = 5, retriesExhausted = true, waitingForNetwork = true)) }
+        compose.onNodeWithText("Connection failed").assertIsDisplayed()
+        spinner.assertDoesNotExist()
+        compose.onNodeWithText("Automatic recovery stopped after 5 retries. Tap Reconnect to try again.").assertDoesNotExist()
+        compose.onNodeWithText("Live MPD updates interrupted; the control connection is retained").assertDoesNotExist()
+        compose.onNodeWithText("Reconnect").assertIsEnabled().performClick()
+        assertEquals(height, row.getUnclippedBoundsInRoot().run { bottom - top })
+
+        compose.runOnIdle {
+            assertEquals(1, reconnects)
+            state.value = state.value.copy(connection = ConnectionState(ConnectionStatus.CONNECTED))
+        }
+        compose.onNodeWithText("Connected").assertIsDisplayed()
+        spinner.assertDoesNotExist()
+        compose.onNodeWithText("Reconnect").assertDoesNotExist()
+        assertEquals(height, row.getUnclippedBoundsInRoot().run { bottom - top })
+    }
+
+    @Test fun terminalIdleFailureKeepsControlAndPermissionFailureOffersResolution() {
+        state.value = state.value.copy(connection = ConnectionState(ConnectionStatus.CONNECTED,
+            error = ConnectionError.INVALID_RESPONSE, failureSource = ConnectionFailureSource.IDLE))
+        show()
+        compose.onNodeWithText("Connection failed").assertIsDisplayed()
+        compose.onNodeWithTag("local_listening_switch").assertIsEnabled()
+        compose.onNodeWithText("Reconnect").assertIsEnabled().performClick()
+        compose.runOnIdle {
+            assertEquals(1, reconnects)
+            state.value = state.value.copy(connection = ConnectionState(ConnectionStatus.FAILED,
+                error = ConnectionError.PERMISSION_REQUIRED, waitingForNetwork = true))
+        }
+        compose.onNodeWithText("Connection failed").assertIsDisplayed()
+        compose.onNodeWithText("Reconnect").assertDoesNotExist()
+        compose.onNodeWithTag("connection_progress").assertDoesNotExist()
+        compose.onNodeWithText("Allow local network").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(1, permissionRequests) }
     }
 
     @Test fun disconnectedCannotEnableAudioButAnActiveReceiverCanAlwaysBeTurnedOff() {

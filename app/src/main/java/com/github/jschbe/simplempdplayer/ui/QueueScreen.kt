@@ -18,6 +18,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.github.jschbe.simplempdplayer.R
+import com.github.jschbe.simplempdplayer.mpd.ConnectionError
 import com.github.jschbe.simplempdplayer.mpd.MpdSnapshot
 import com.github.jschbe.simplempdplayer.mpd.QueueActionContext
 import com.github.jschbe.simplempdplayer.mpd.QueueAvailability
@@ -32,6 +33,7 @@ internal fun QueueScreen(
     visible: Boolean,
     onAction: (PlayerAction.QueueAction, QueueActionContext) -> Unit,
     onRetry: (Long) -> Unit,
+    commandError: ConnectionError? = null,
 ) {
     key(serverId) {
         val list = rememberLazyListState()
@@ -61,6 +63,7 @@ internal fun QueueScreen(
                 else Spacer(Modifier.weight(1f))
                 TextButton(onClick = { confirmClear = true }, enabled = enabled && canClear) { Text(stringResource(R.string.clear_queue)) }
             }
+            commandError?.let { Box(Modifier.padding(horizontal = 16.dp)) { ErrorText(it.label()) } }
             if (snapshot != null && !complete) {
                 Column(Modifier.padding(16.dp)) {
                     Text(stringResource(when (snapshot.queueAvailability) {

@@ -20,6 +20,7 @@
     </plurals>
     <string name="timer_custom_option">Власне значення…</string>
     <string name="timer_custom_done_hint">Натисніть «Готово», щоб застосувати тривалість. Це не вмикає таймер.</string>
+    <string name="timer_changes_unavailable">Наразі таймер не можна змінити.</string>
     <string name="timer_waiting_hint">Повний зворотний відлік почнеться, коли застосунок виявить відтворення на цьому сервері. Якщо воно почнеться за закритого застосунку або коли вибрано інший сервер, запуск може бути виявлено лише після повернення чи повторного підключення.</string>
     <string name="track_info_expand">Розгорнути відомості про трек</string>
     <string name="track_info_collapse">Згорнути відомості про трек</string>
@@ -154,12 +155,8 @@
     <string name="host_not_reachable">Хост недоступний. Перевірте адресу й мережу.</string>
     <string name="connection_timed_out">Час очікування підключення вичерпано. Перевірте сервер і повторіть спробу.</string>
     <string name="invalid_mpd_response">Некоректна відповідь MPD. Перевірте, чи це адреса MPD.</string>
-    <string name="connection_recovering">Автовідновлення · використано %1$d із 5 спроб</string>
+    <string name="reconnecting">Повторне підключення…</string>
     <string name="connection_waiting_network">Мережа недоступна</string>
-    <string name="connection_retries_exhausted">Автовідновлення зупинено після 5 спроб. Натисніть «Підключитися знову», щоб повторити.</string>
-    <string name="connection_source_connect">Не вдалося встановити з’єднання MPD</string>
-    <string name="connection_source_control">З’єднання керування MPD перервано</string>
-    <string name="connection_source_idle">Оновлення MPD у реальному часі перервано; керування працює</string>
     <string name="connection_lost">З’єднання втрачено. Перевірте сервер і мережу.</string>
     <string name="mpd_rejected">MPD відхилив команду. Перевірте дозволи сервера або доступність вибраного треку. Автентифікація паролем поки не підтримується.</string>
     <string name="network_error">Помилка мережі. Перевірте з’єднання та повторіть спробу.</string>

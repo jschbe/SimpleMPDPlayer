@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.github.jschbe.simplempdplayer.R
@@ -20,6 +22,7 @@ import com.github.jschbe.simplempdplayer.ServersUiState
 import com.github.jschbe.simplempdplayer.data.ServerProfile
 import com.github.jschbe.simplempdplayer.data.ThemeMode
 import com.github.jschbe.simplempdplayer.mpd.ConnectionError
+import com.github.jschbe.simplempdplayer.mpd.ConnectionState
 import com.github.jschbe.simplempdplayer.mpd.ConnectionStatus
 import com.github.jschbe.simplempdplayer.mpd.PlayerAction
 import com.github.jschbe.simplempdplayer.mpd.QueueActionContext
@@ -47,7 +50,7 @@ fun ServersApp(
     onEnqueue: (String, Boolean, Long) -> Unit = { _, _, _ -> },
     onLocalListening: (Boolean) -> Unit = {},
     onSleepEnabled: (Boolean) -> Unit = {},
-    onSleepMinutes: (Int) -> Unit = {},
+    onSleepMinutes: (Int) -> Boolean = { false },
     onSleepRetry: () -> Unit = {},
     onTrackInfoExpanded: (Boolean) -> Unit = {},
     language: AppLanguage = AppLanguage.SYSTEM,
@@ -86,13 +89,13 @@ fun ServersApp(
                 title = {
                     if (showServers) Text(stringResource(R.string.servers)) else Box {
                         Row(
-                            Modifier.testTag("server_dropdown").clickable(enabled = !state.loading && !state.saving && state.settings.servers.isNotEmpty()) { serverMenu = true },
+                            Modifier.testTag("server_dropdown").clickable(enabled = state.settingsEditable && state.settings.servers.isNotEmpty()) { serverMenu = true },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(state.activeServer?.name ?: stringResource(R.string.select_server), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                             Icon(painterResource(R.drawable.ic_expand), stringResource(R.string.select_server))
                         }
-                        DropdownMenu(expanded = serverMenu, onDismissRequest = { serverMenu = false }) {
+                        DropdownMenu(expanded = serverMenu && state.settingsEditable, onDismissRequest = { serverMenu = false }) {
                             state.settings.servers.forEach { server ->
                                 DropdownMenuItem(
                                     text = { Text(server.name) },
@@ -110,7 +113,7 @@ fun ServersApp(
                     }
                 },
                 actions = {
-                    if (showServers) IconButton(onClick = onAdd, enabled = !state.loading && !state.saving && !state.settings.readFailed) {
+                    if (showServers) IconButton(onClick = onAdd, enabled = state.settingsEditable) {
                         Icon(painterResource(R.drawable.ic_add), stringResource(R.string.add_server))
                     }
                     Box {
@@ -130,42 +133,6 @@ fun ServersApp(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                val connection = state.connection
-                val label = when {
-                    connection.waitingForNetwork -> stringResource(R.string.connection_waiting_network)
-                    connection.recovering -> stringResource(R.string.connection_recovering, connection.retryAttempt)
-                    else -> stringResource(connection.status.label())
-                }
-                Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                if (state.loading || connection.status == ConnectionStatus.CONNECTING || connection.recovering) {
-                    CircularProgressIndicator(Modifier.size(20.dp))
-                } else if ((!connected || connection.error != null || connection.retriesExhausted) && state.activeServer != null) {
-                    TextButton(onClick = onReconnect) { Text(stringResource(R.string.reconnect)) }
-                }
-            }
-            if (state.connection.retriesExhausted) {
-                Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { ErrorText(R.string.connection_retries_exhausted) }
-            }
-            state.connection.failureSource?.takeIf { state.connection.error != null }?.let {
-                Text(stringResource(it.label()), modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
-            }
-            (state.connection.error ?: state.connection.commandError)?.let {
-                Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { ErrorText(it.label()) }
-            }
-            if (state.connection.error == ConnectionError.PERMISSION_REQUIRED) {
-                TextButton(onClick = onGrantNetworkAccess, modifier = Modifier.padding(horizontal = 8.dp)) {
-                    Text(stringResource(R.string.allow_local_network))
-                }
-            }
-            if (!state.connection.livePlayerStatus && state.connection.snapshot != null) {
-                Text(stringResource(R.string.stale_data), modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
-            }
-            if (!showServers && state.saveFailed) ErrorText(R.string.settings_save_failed)
             if (showServers) {
                 ServerManagement(state, onEdit, onDelete, {
                     onSelect(it)
@@ -173,6 +140,11 @@ fun ServersApp(
                     scope.launch { pager.scrollToPage(1) }
                 }, onReload, onReorder)
             } else {
+                ConnectionStatusRow(state.connection, state.activeServer != null, onReconnect, onGrantNetworkAccess)
+                if (state.settings.readFailed && state.activeServer == null) {
+                    Column(Modifier.padding(horizontal = 16.dp)) { SettingsReadError(state.loading, onReload) }
+                }
+                if (state.saveFailed) ErrorText(R.string.settings_save_failed)
                 PrimaryTabRow(selectedTabIndex = pager.currentPage) {
                     listOf(R.string.browser, R.string.player, R.string.queue).forEachIndexed { index, title ->
                         Tab(
@@ -189,9 +161,10 @@ fun ServersApp(
                         1 -> PlayerScreen(state, controlsEnabled, onAction, onLocalListening, onTrackInfoExpanded,
                             onOpenSleepTimer = { sleepTimer = true })
                         2 -> QueueScreen(
-                            state.connection.snapshot, state.settings.selectedId,
+                            state.connection.snapshot, state.activeServer?.id,
                             state.connection.sessionId.takeIf { connected },
                             controlsEnabled, pager.settledPage == 2, onQueueAction, onRetryQueue,
+                            commandError = state.connection.commandError.takeIf { state.connection.commandErrorFromQueue },
                         )
                     }
                 }
@@ -199,10 +172,10 @@ fun ServersApp(
         }
     }
     state.editor?.let { editor ->
-        key(editor.token) { ServerEditorDialog(editor, state.settings.servers, state.saving, state.saveFailed, onDismissEditor, onSave, onTest) }
+        key(editor.token) { ServerEditorDialog(editor, state, onDismissEditor, onSave, onTest, onReload) }
     }
     if (sleepTimer) {
-        SleepTimerDialog(state.sleepTimer, state.activeServer?.name, state.saving,
+        SleepTimerDialog(state.sleepTimer, state.activeServer?.name, !state.settingsEditable,
             onSleepEnabled, onSleepMinutes, onSleepRetry, { sleepTimer = false })
     }
     if (appearance) {
@@ -213,10 +186,10 @@ fun ServersApp(
                 Column {
                     ThemeMode.entries.forEach { mode ->
                         Row(
-                            Modifier.fillMaxWidth().testTag("theme_${mode.name}").clickable(enabled = !state.saving) { onTheme(mode) }.padding(vertical = 8.dp),
+                            Modifier.fillMaxWidth().testTag("theme_${mode.name}").clickable(enabled = state.settingsEditable) { onTheme(mode) }.padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            RadioButton(selected = state.settings.theme == mode, onClick = { onTheme(mode) }, enabled = !state.saving)
+                            RadioButton(selected = state.settings.theme == mode, onClick = { onTheme(mode) }, enabled = state.settingsEditable)
                             Text(stringResource(when (mode) {
                                 ThemeMode.SYSTEM -> R.string.theme_system
                                 ThemeMode.LIGHT -> R.string.theme_light
@@ -224,6 +197,7 @@ fun ServersApp(
                             }))
                         }
                     }
+                    if (state.settings.readFailed) SettingsReadError(state.loading, onReload)
                     if (state.saveFailed) ErrorText(R.string.settings_save_failed)
                 }
             },
@@ -232,4 +206,44 @@ fun ServersApp(
     }
     if (languageDialog) LanguageDialog(language, onLanguage) { languageDialog = false }
     if (about) AboutDialog { about = false }
+}
+
+@Composable
+internal fun ConnectionStatusRow(
+    connection: ConnectionState,
+    hasServer: Boolean,
+    onReconnect: () -> Unit,
+    onGrantNetworkAccess: () -> Unit,
+) {
+    val permissionRequired = connection.error == ConnectionError.PERMISSION_REQUIRED
+    val busy = !permissionRequired && !connection.retriesExhausted &&
+        (connection.recovering || connection.status == ConnectionStatus.CONNECTING)
+    val failed = permissionRequired || connection.retriesExhausted || (!busy &&
+        (connection.status == ConnectionStatus.FAILED || connection.error != null))
+    val label = when {
+        failed -> R.string.connection_failed
+        connection.waitingForNetwork -> R.string.connection_waiting_network
+        connection.recovering -> R.string.reconnecting
+        else -> connection.status.label()
+    }
+    val stale = stringResource(R.string.stale_data)
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 16.dp).testTag("connection_status_row"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(stringResource(label), style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.weight(1f).semantics {
+                if (connection.snapshot != null && !connection.livePlayerStatus) stateDescription = stale
+            })
+        if (permissionRequired || (failed && hasServer)) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                TextButton(onClick = if (permissionRequired) onGrantNetworkAccess else onReconnect) {
+                    Text(stringResource(if (permissionRequired) R.string.allow_local_network else R.string.reconnect))
+                }
+            }
+        } else if (busy) {
+            CircularProgressIndicator(Modifier.size(20.dp).testTag("connection_progress"), strokeWidth = 2.dp)
+        }
+    }
 }

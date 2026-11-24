@@ -32,26 +32,50 @@ internal fun SleepTimerDialog(
     selectedName: String?,
     settingsBusy: Boolean,
     onEnabled: (Boolean) -> Unit,
-    onMinutes: (Int) -> Unit,
+    onMinutes: (Int) -> Boolean,
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var custom by rememberSaveable(state.settings.minutes) { mutableStateOf(state.settings.minutes.toString()) }
+    var draft by rememberSaveable { mutableStateOf<String?>(null) }
     var customMode by rememberSaveable { mutableStateOf(state.settings.minutes !in sleepTimerPresets) }
+    var submitted by remember { mutableStateOf<Int?>(null) }
+    var closeAfterApply by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val custom = draft ?: state.settings.minutes.toString()
     val minutes = sleepMinutes(custom)
-    val editable = !state.loading && !state.busy && !settingsBusy && state.operationError != TimerError.STORAGE
-    val delivering = state.settings.record?.status == TimerStatus.DELIVERING
+    val changed = customMode && minutes != state.settings.minutes
+    val editable = state.editable && !settingsBusy && submitted == null
+    fun applyCustom(close: Boolean) {
+        val value = minutes ?: return
+        if (!changed || !editable || !onMinutes(value)) return
+        submitted = value
+        closeAfterApply = close
+        focus.clearFocus()
+        keyboard?.hide()
+    }
+    LaunchedEffect(submitted, state.busy, state.settings.minutes, state.operationError) {
+        val value = submitted ?: return@LaunchedEffect
+        if (state.busy) return@LaunchedEffect
+        if (state.operationError != null) {
+            submitted = null
+            closeAfterApply = false
+        } else if (state.settings.minutes == value) {
+            draft = null
+            submitted = null
+            if (closeAfterApply) onDismiss()
+            closeAfterApply = false
+        }
+    }
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (submitted == null) onDismiss() },
         title = { Text(stringResource(R.string.sleep_timer)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     Text(stringResource(R.string.timer_enabled), Modifier.weight(1f))
-                    Switch(state.enabled, onEnabled, enabled = editable && !delivering && (state.enabled || selectedName != null),
+                    Switch(state.enabled, onEnabled, enabled = editable && (state.enabled || selectedName != null),
                         modifier = Modifier.testTag("sleep_timer_switch"))
                 }
                 if (selectedName == null && !state.enabled) Text(stringResource(R.string.timer_select_server))
@@ -67,18 +91,24 @@ internal fun SleepTimerDialog(
                                 android.text.format.DateFormat.getTimeFormat(context).format(Date(it))))
                     }
                 } else Text(stringResource(timerStatusText(state)))
-                ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { if (editable && !delivering) expanded = it }) {
+                ExposedDropdownMenuBox(expanded = expanded && editable, onExpandedChange = { if (editable) expanded = it }) {
                     OutlinedTextField(
                         value = if (customMode) stringResource(R.string.timer_custom_option) else pluralStringResource(R.plurals.timer_duration_minutes, state.settings.minutes, state.settings.minutes),
-                        onValueChange = {}, readOnly = true, singleLine = true, enabled = editable && !delivering,
+                        onValueChange = {}, readOnly = true, singleLine = true, enabled = editable,
                         label = { Text(stringResource(R.string.timer_duration)) },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded && editable) },
                         modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable,
-                            enabled = editable && !delivering).testTag("timer_duration_dropdown"))
-                    ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            enabled = editable).testTag("timer_duration_dropdown"))
+                    ExposedDropdownMenu(expanded = expanded && editable, onDismissRequest = { expanded = false }) {
                         sleepTimerPresets.forEach { preset ->
                             DropdownMenuItem(text = { Text(pluralStringResource(R.plurals.timer_duration_minutes, preset, preset)) },
-                                onClick = { customMode = false; expanded = false; onMinutes(preset) },
+                                onClick = {
+                                    if (editable && (preset == state.settings.minutes || onMinutes(preset))) {
+                                        customMode = false
+                                        draft = null
+                                        expanded = false
+                                    }
+                                },
                                 modifier = Modifier.testTag("timer_preset_$preset"))
                         }
                         DropdownMenuItem(text = { Text(stringResource(R.string.timer_custom_option)) },
@@ -86,17 +116,22 @@ internal fun SleepTimerDialog(
                     }
                 }
                 if (customMode) {
-                    OutlinedTextField(custom, { custom = it }, label = { Text(stringResource(R.string.timer_custom_minutes)) },
+                    OutlinedTextField(custom, { draft = it }, label = { Text(stringResource(R.string.timer_custom_minutes)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = {
-                            if (editable && !delivering && minutes != null) {
-                                onMinutes(minutes)
-                                focus.clearFocus(); keyboard?.hide()
+                            if (changed) applyCustom(close = false)
+                            else {
+                                focus.clearFocus()
+                                keyboard?.hide()
                             }
-                        }), singleLine = true, enabled = editable && !delivering, isError = minutes == null,
+                        }), singleLine = true, enabled = editable, isError = minutes == null,
                         supportingText = { if (minutes == null) Text(stringResource(R.string.timer_minutes_error)) },
                         modifier = Modifier.fillMaxWidth().testTag("timer_custom_minutes"))
-                    Text(stringResource(R.string.timer_custom_done_hint), style = MaterialTheme.typography.bodySmall)
+                    if (editable) {
+                        Text(stringResource(R.string.timer_custom_done_hint), style = MaterialTheme.typography.bodySmall)
+                    } else if (changed && !state.delivering && state.operationError != TimerError.STORAGE) {
+                        Text(stringResource(R.string.timer_changes_unavailable), style = MaterialTheme.typography.bodySmall)
+                    }
                 }
                 if (state.waiting) Text(stringResource(R.string.timer_waiting_hint), style = MaterialTheme.typography.bodySmall)
                 Text(stringResource(R.string.timer_restart_hint), style = MaterialTheme.typography.bodySmall)
@@ -107,9 +142,13 @@ internal fun SleepTimerDialog(
             }
         },
         confirmButton = { TextButton(onClick = {
-            if (customMode && editable && !delivering) minutes?.let(onMinutes)
-            onDismiss()
-        }, enabled = !customMode || minutes != null) { Text(stringResource(R.string.done)) } },
+            if (changed) applyCustom(close = true) else onDismiss()
+        }, enabled = submitted == null && (!changed || (minutes != null && editable))) {
+            Text(stringResource(R.string.done))
+        } },
+        dismissButton = {
+            if (changed && submitted == null) TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        },
     )
 }
 

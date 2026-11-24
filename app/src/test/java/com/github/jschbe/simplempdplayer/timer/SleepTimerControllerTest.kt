@@ -376,6 +376,18 @@ class SleepTimerControllerTest {
         assertEquals(TimerError.STORAGE, f.timer.state.value.operationError)
     }
 
+    @Test fun alarmDeliveryFailsClosedWhenThePersistedProfilesCannotBeRead() = runTest {
+        val f = Fixture()
+        val armed = f.start()
+        val writes = f.store.writes
+        f.profiles.value = f.profiles.value.copy(readFailed = true)
+        f.expire()
+        assertTrue(f.targets.isEmpty())
+        assertEquals(armed, f.store.read().record)
+        assertEquals(writes, f.store.writes)
+        assertEquals(TimerError.STORAGE, f.timer.state.value.operationError)
+    }
+
     @Test fun duplicateOldAndEarlyEventsNeverCauseExtraDelivery() = runTest {
         val f = Fixture(); val old = f.start()
         f.timer.fire(old.token)

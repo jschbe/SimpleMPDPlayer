@@ -45,6 +45,8 @@ data class SleepTimerState(
     val active get() = settings.record?.status == TimerStatus.ACTIVE
     val waiting get() = settings.record?.status == TimerStatus.WAITING
     val enabled get() = settings.record?.pending == true
+    val delivering get() = settings.record?.status == TimerStatus.DELIVERING
+    val editable get() = !loading && !busy && !delivering && operationError != TimerError.STORAGE
 }
 
 /** Pulled under the timer mutation lock, never trusted from a queued status-event payload. */

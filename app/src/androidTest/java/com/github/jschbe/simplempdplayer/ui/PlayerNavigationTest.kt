@@ -185,7 +185,8 @@ class PlayerNavigationTest {
     @Test
     fun playerShowsStaleStatusUntilOngoingSynchronizationReturns() {
         show()
-        val stale = compose.onNodeWithText("Showing the last received server state")
+        val stale = compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription,
+            "Showing the last received server state"))
         stale.assertDoesNotExist()
         compose.runOnIdle {
             ui.value = ui.value.copy(connection = ui.value.connection.copy(waitingForNetwork = true,
@@ -201,6 +202,19 @@ class PlayerNavigationTest {
         compose.onNodeWithContentDescription("Play").assertIsEnabled()
         compose.runOnIdle { ui.value = ui.value.copy(connection = ui.value.connection.copy(idleConnected = true)) }
         stale.assertDoesNotExist()
+    }
+
+    @Test
+    fun rejectedQueueActionShowsItsErrorOnlyInTheQueue() {
+        show()
+        compose.runOnIdle {
+            ui.value = ui.value.copy(connection = ui.value.connection.copy(
+                commandError = ConnectionError.QUEUE_CHANGED, commandErrorFromQueue = true))
+        }
+        val error = compose.activity.getString(com.github.jschbe.simplempdplayer.R.string.queue_changed_action)
+        compose.onNodeWithText(error).assertDoesNotExist()
+        compose.onNodeWithTag("tab_2").performClick()
+        compose.onNode(hasText(error) and hasAnyAncestor(hasTestTag("queue_page"))).assertIsDisplayed()
     }
 
     @Test

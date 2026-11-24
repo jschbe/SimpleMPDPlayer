@@ -40,7 +40,6 @@ class LocalizationResourcesTest {
             assertEquals("SimpleMPDPlayer", localized.getValue("app_name").textContent)
             assertTrue(localized.getValue("timer_minutes_error").textContent.contains("1440"))
             assertTrue(localized.getValue("timer_minutes_error").textContent.contains("1"))
-            assertTrue(localized.getValue("connection_recovering").textContent.contains("5"))
         }
     }
 

@@ -19,6 +19,7 @@
     </plurals>
     <string name="timer_custom_option">Personalizado…</string>
     <string name="timer_custom_done_hint">Pulsa « Listo » para aplicar la duración. Esto no activa el temporizador.</string>
+    <string name="timer_changes_unavailable">No se puede modificar el temporizador en este momento.</string>
     <string name="timer_waiting_hint">La cuenta atrás completa comienza cuando la app detecta la reproducción en este servidor. Si empieza con la app cerrada o con otro servidor seleccionado, quizá solo se detecte al volver o reconectar.</string>
     <string name="track_info_expand">Expandir información de la pista</string>
     <string name="track_info_collapse">Contraer información de la pista</string>
@@ -153,12 +154,8 @@
     <string name="host_not_reachable">Host inaccesible. Comprueba el host y la red.</string>
     <string name="connection_timed_out">Tiempo de conexión agotado. Comprueba el servidor y vuelve a intentarlo.</string>
     <string name="invalid_mpd_response">Respuesta MPD no válida. Comprueba que el destino sea MPD.</string>
-    <string name="connection_recovering">Reconexión automática · %1$d de 5 intentos usados</string>
+    <string name="reconnecting">Reconectando…</string>
     <string name="connection_waiting_network">Red no disponible</string>
-    <string name="connection_retries_exhausted">Reconexión automática detenida tras 5 intentos. Pulsa Reconectar para volver a intentarlo.</string>
-    <string name="connection_source_connect">Error al conectar con MPD</string>
-    <string name="connection_source_control">Conexión de control MPD interrumpida</string>
-    <string name="connection_source_idle">Actualizaciones MPD interrumpidas; la conexión de control sigue activa</string>
     <string name="connection_lost">Conexión perdida. Comprueba el servidor y la red.</string>
     <string name="mpd_rejected">MPD rechazó el comando. Comprueba los permisos del servidor o si la pista seleccionada sigue disponible. Aún no se admite autenticación con contraseña.</string>
     <string name="network_error">Error de red. Comprueba la conexión y vuelve a intentarlo.</string>

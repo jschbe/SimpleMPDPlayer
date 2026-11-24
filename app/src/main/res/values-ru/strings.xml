@@ -20,6 +20,7 @@
     </plurals>
     <string name="timer_custom_option">Другое значение…</string>
     <string name="timer_custom_done_hint">Нажмите «Готово», чтобы применить длительность. Таймер при этом не включится.</string>
+    <string name="timer_changes_unavailable">Сейчас изменить таймер нельзя.</string>
     <string name="timer_waiting_hint">Полный обратный отсчёт начнётся, когда приложение обнаружит воспроизведение на этом сервере. Если оно начнётся при закрытом приложении или при выборе другого сервера, запуск может обнаружиться лишь после возвращения или переподключения.</string>
     <string name="track_info_expand">Развернуть сведения о треке</string>
     <string name="track_info_collapse">Свернуть сведения о треке</string>
@@ -154,12 +155,8 @@
     <string name="host_not_reachable">Хост недоступен. Проверьте адрес и сеть.</string>
     <string name="connection_timed_out">Время ожидания подключения истекло. Проверьте сервер и повторите попытку.</string>
     <string name="invalid_mpd_response">Некорректный ответ MPD. Проверьте, что это адрес MPD.</string>
-    <string name="connection_recovering">Автовосстановление · использовано %1$d из 5 попыток</string>
+    <string name="reconnecting">Повторное подключение…</string>
     <string name="connection_waiting_network">Сеть недоступна</string>
-    <string name="connection_retries_exhausted">Автовосстановление остановлено после 5 попыток. Нажмите «Переподключиться», чтобы повторить.</string>
-    <string name="connection_source_connect">Не удалось установить соединение с MPD</string>
-    <string name="connection_source_control">Соединение управления MPD прервано</string>
-    <string name="connection_source_idle">Обновления MPD в реальном времени прерваны; управление работает</string>
     <string name="connection_lost">Соединение потеряно. Проверьте сервер и сеть.</string>
     <string name="mpd_rejected">MPD отклонил команду. Проверьте права на сервере или доступность выбранного трека. Аутентификация по паролю пока не поддерживается.</string>
     <string name="network_error">Ошибка сети. Проверьте соединение и повторите попытку.</string>

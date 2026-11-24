@@ -48,7 +48,7 @@ internal fun ServerManagement(
     onReorder: (List<String>) -> Unit,
 ) {
     var deleteId by rememberSaveable { mutableStateOf<String?>(null) }
-    val enabled = !state.loading && !state.saving && !state.settings.readFailed
+    val enabled = state.settingsEditable
     val list = rememberLazyListState()
     var order by remember { mutableStateOf(state.settings.servers) }
     var draggedId by remember { mutableStateOf<String?>(null) }
@@ -83,12 +83,11 @@ internal fun ServerManagement(
     }
     Column(Modifier.fillMaxSize()) {
         if (state.settings.recovered) ErrorText(R.string.settings_recovered)
-        if (state.settings.readFailed) {
-            ErrorText(R.string.settings_read_failed)
-            TextButton(onClick = onReload) { Text(stringResource(R.string.retry)) }
-        }
+        if (state.settings.readFailed) SettingsReadError(state.loading, onReload)
         if (state.saveFailed) ErrorText(R.string.settings_save_failed)
-        if (!state.loading && order.isEmpty()) Text(stringResource(R.string.no_servers), Modifier.padding(16.dp))
+        if (!state.loading && !state.settings.readFailed && order.isEmpty()) {
+            Text(stringResource(R.string.no_servers), Modifier.padding(16.dp))
+        }
         LazyColumn(state = list, modifier = Modifier.weight(1f).testTag("server_list"), contentPadding = PaddingValues(8.dp)) {
             items(order, key = { it.id }) { server ->
                 val dragging = draggedId == server.id
@@ -144,14 +143,14 @@ internal fun ServerManagement(
 @Composable
 internal fun ServerEditorDialog(
     editor: ServerEditor,
-    servers: List<ServerProfile>,
-    saving: Boolean,
-    saveFailed: Boolean,
+    state: ServersUiState,
     onDismiss: () -> Unit,
     onSave: (ServerProfile) -> Unit,
     onTest: (ServerProfile) -> Unit,
+    onReload: () -> Unit,
 ) {
     val server = editor.server
+    val saving = state.saving
     val busy = saving || editor.testing
     var name by rememberSaveable(server?.id) { mutableStateOf(server?.name.orEmpty()) }
     var host by rememberSaveable(server?.id) { mutableStateOf(server?.host.orEmpty()) }
@@ -161,7 +160,7 @@ internal fun ServerEditorDialog(
     val input = ServerInput(name, host, mpdPort, streamPort)
     val inputErrors = input.errors()
     val errors = if (submitted) inputErrors else emptySet()
-    val duplicateName = servers.hasDuplicateName(name, server?.id)
+    val duplicateName = state.settings.servers.hasDuplicateName(name, server?.id)
     val invalidName = ProfileField.NAME in inputErrors || duplicateName
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
@@ -174,7 +173,8 @@ internal fun ServerEditorDialog(
                 ProfileTextField(host, { host = it }, R.string.server_host, ProfileField.HOST in errors, R.string.invalid_host, !busy, placeholder = R.string.host_placeholder)
                 ProfileTextField(mpdPort, { mpdPort = it }, R.string.mpd_port, ProfileField.MPD_PORT in errors, R.string.invalid_port, !busy, true)
                 ProfileTextField(streamPort, { streamPort = it }, R.string.http_stream_port, ProfileField.STREAM_PORT in errors, R.string.invalid_port, !busy, true)
-                if (saveFailed) ErrorText(R.string.settings_save_failed)
+                if (state.settings.readFailed) SettingsReadError(state.loading, onReload)
+                if (state.saveFailed) ErrorText(R.string.settings_save_failed)
                 editor.testError?.let { ErrorText(it.label()) }
                 if (editor.testing) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -195,7 +195,7 @@ internal fun ServerEditorDialog(
                     submitted = true
                     val profile = if (server == null) input.toProfile() else input.toProfile(server.id)
                     if (!invalidName) profile?.let(onSave)
-                }, enabled = !busy && !invalidName) { Text(stringResource(R.string.save)) }
+                }, enabled = state.settingsEditable && !busy && !invalidName) { Text(stringResource(R.string.save)) }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text(stringResource(R.string.cancel)) } },
@@ -232,6 +232,12 @@ internal fun ErrorText(@StringRes text: Int) {
     Text(stringResource(text), color = MaterialTheme.colorScheme.error)
 }
 
+@Composable
+internal fun SettingsReadError(loading: Boolean, onReload: () -> Unit) {
+    ErrorText(R.string.settings_read_failed)
+    TextButton(onClick = onReload, enabled = !loading) { Text(stringResource(R.string.retry)) }
+}
+
 @StringRes
 internal fun ConnectionStatus.label(): Int = when (this) {
     ConnectionStatus.DISCONNECTED -> R.string.disconnected
@@ -252,11 +258,4 @@ internal fun ConnectionError.label(): Int = when (this) {
     ConnectionError.MPD_REJECTED -> R.string.mpd_rejected
     ConnectionError.NETWORK -> R.string.network_error
     ConnectionError.PERMISSION_REQUIRED -> R.string.local_network_permission_required
-}
-
-@StringRes
-internal fun com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.label(): Int = when (this) {
-    com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.CONNECT -> R.string.connection_source_connect
-    com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.CONTROL -> R.string.connection_source_control
-    com.github.jschbe.simplempdplayer.mpd.ConnectionFailureSource.IDLE -> R.string.connection_source_idle
 }

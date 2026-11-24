@@ -11,10 +11,12 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.platform.app.InstrumentationRegistry
 import com.github.jschbe.simplempdplayer.R
 import com.github.jschbe.simplempdplayer.ServersUiState
@@ -31,6 +33,43 @@ import org.junit.Test
 /** Controlled UI only: no settings writes, repository, sockets or live MPD. */
 class LocalizedLayoutTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test fun connectionActionsWrapAtDoubleFontSizeInAllLocalesAndThemes() {
+        val tag = mutableStateOf("de")
+        val mode = mutableStateOf(ThemeMode.SYSTEM)
+        val context = compose.activity
+        val connection = mutableStateOf(ConnectionState(ConnectionStatus.FAILED, error = ConnectionError.PERMISSION_REQUIRED))
+        compose.activityRule.scenario.onActivity { it.setShowWhenLocked(true); it.setTurnScreenOn(true) }
+        fun configuration() = Configuration(context.resources.configuration).apply { setLocale(Locale.forLanguageTag(tag.value)) }
+        compose.setContent {
+            val localized = remember(tag.value) { context.createConfigurationContext(configuration()) }
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalResources provides localized.resources,
+                LocalDensity provides Density(density.density, 2f)) {
+                SimpleMPDPlayerTheme(mode = mode.value) {
+                    Box(Modifier.width(300.dp)) { ConnectionStatusRow(connection.value, true, {}, {}) }
+                }
+            }
+        }
+        for ((index, language) in listOf("en", "de", "fr", "it", "es", "uk", "ru").withIndex()) {
+            compose.runOnIdle {
+                tag.value = language
+                mode.value = ThemeMode.entries[index % ThemeMode.entries.size]
+            }
+            val resources = context.createConfigurationContext(configuration()).resources
+            for ((error, action) in listOf(ConnectionError.PERMISSION_REQUIRED to R.string.allow_local_network,
+                ConnectionError.LOST to R.string.reconnect)) {
+                compose.runOnIdle { connection.value = connection.value.copy(error = error) }
+                for (label in listOf(R.string.connection_failed, action)) {
+                    val node = compose.onNodeWithText(resources.getString(label), useUnmergedTree = true).assertIsDisplayed()
+                    val layout = mutableListOf<TextLayoutResult>()
+                    node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layout) }
+                    assertFalse("$language/$label", layout.single().hasVisualOverflow)
+                }
+                compose.onNodeWithText(resources.getString(action)).assertIsEnabled().assertHasClickAction()
+            }
+        }
+    }
 
     @Test fun representativeScreensRemainAccessibleWithLongTextAndDoubleFontSize() {
         val tag = mutableStateOf("de")
@@ -58,7 +97,7 @@ class LocalizedLayoutTest {
                                 true, mutations::add)
                             "language" -> LanguageDialog(AppLanguage.fromTags(tag.value), {}, {})
                             "about" -> AboutDialog {}
-                            "timer" -> SleepTimerDialog(timer, server.name, false, {}, {}, {}, {})
+                            "timer" -> SleepTimerDialog(timer, server.name, false, {}, { false }, {}, {})
                         }
                         }
                     }

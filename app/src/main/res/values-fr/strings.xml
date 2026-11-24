@@ -19,6 +19,7 @@
     </plurals>
     <string name="timer_custom_option">Personnalisé…</string>
     <string name="timer_custom_done_hint">Appuyez sur « Terminé » pour appliquer la durée. Cela n’active pas la minuterie.</string>
+    <string name="timer_changes_unavailable">La minuterie ne peut pas être modifiée pour le moment.</string>
     <string name="timer_waiting_hint">Le compte à rebours complet commence lorsque l’application détecte la lecture sur ce serveur. Si celle-ci démarre alors que l’application est fermée ou qu’un autre serveur est sélectionné, elle peut n’être détectée qu’au retour dans l’application ou après reconnexion.</string>
     <string name="track_info_expand">Développer les informations du morceau</string>
     <string name="track_info_collapse">Réduire les informations du morceau</string>
@@ -153,12 +154,8 @@
     <string name="host_not_reachable">Hôte inaccessible. Vérifiez l’hôte et le réseau.</string>
     <string name="connection_timed_out">Délai de connexion dépassé. Vérifiez le serveur et réessayez.</string>
     <string name="invalid_mpd_response">Réponse MPD invalide. Vérifiez qu’il s’agit bien d’un point d’accès MPD.</string>
-    <string name="connection_recovering">Reconnexion automatique · %1$d tentatives sur 5 utilisées</string>
+    <string name="reconnecting">Reconnexion…</string>
     <string name="connection_waiting_network">Réseau indisponible</string>
-    <string name="connection_retries_exhausted">Reconnexion automatique arrêtée après 5 tentatives. Touchez Reconnecter pour réessayer.</string>
-    <string name="connection_source_connect">Échec de connexion à MPD</string>
-    <string name="connection_source_control">Connexion de contrôle MPD interrompue</string>
-    <string name="connection_source_idle">Mises à jour MPD interrompues ; la connexion de contrôle reste active</string>
     <string name="connection_lost">Connexion perdue. Vérifiez le serveur et le réseau.</string>
     <string name="mpd_rejected">MPD a refusé la commande. Vérifiez les autorisations du serveur ou la disponibilité du morceau sélectionné. L’authentification par mot de passe n’est pas encore prise en charge.</string>
     <string name="network_error">Erreur réseau. Vérifiez votre connexion et réessayez.</string>

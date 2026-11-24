@@ -37,8 +37,8 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
     val song = snapshot?.currentSong
     val hasQueue = snapshot?.hasQueuedSongs == true
     val duration = status?.duration
-    var draggedPosition by remember(state.settings.selectedId, status?.songId) { mutableStateOf<Float?>(null) }
-    var draggedVolume by remember(state.settings.selectedId, status?.volume) { mutableStateOf<Float?>(null) }
+    var draggedPosition by remember(state.activeServer?.id, status?.songId) { mutableStateOf<Float?>(null) }
+    var draggedVolume by remember(state.activeServer?.id, status?.volume) { mutableStateOf<Float?>(null) }
     LaunchedEffect(enabled) {
         if (!enabled) { draggedPosition = null; draggedVolume = null }
     }
@@ -51,7 +51,7 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
         val expandedDescription = stringResource(if (expanded) R.string.track_info_expanded else R.string.track_info_collapsed)
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("track_info_toggle")
             .semantics { stateDescription = expandedDescription }
-            .clickable(enabled = !state.loading && !state.saving && !state.settings.readFailed,
+            .clickable(enabled = state.settingsEditable,
                 role = Role.Button, onClickLabel = expandLabel) { onTrackInfoExpanded(!expanded) },
             verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -123,7 +123,7 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
             PlaybackButton(R.drawable.ic_stop, R.string.stop, enabled && hasQueue) { onAction(PlayerAction.Stop) }
             PlaybackButton(R.drawable.ic_next, R.string.next, enabled && hasQueue) { onAction(PlayerAction.Next) }
         }
-        key(state.settings.selectedId) { PlaybackOptions(status, enabled, onAction) }
+        key(state.activeServer?.id) { PlaybackOptions(status, enabled, onAction) }
         status?.volume?.let { volume ->
             Text(stringResource(R.string.mpd_volume, draggedVolume?.toInt() ?: volume))
             Slider(
@@ -139,6 +139,7 @@ internal fun PlayerScreen(state: ServersUiState, enabled: Boolean, onAction: (Pl
             )
         }
         if (state.connection.commandPending) Text(stringResource(R.string.applying_command), style = MaterialTheme.typography.labelSmall)
+        state.connection.commandError?.takeUnless { state.connection.commandErrorFromQueue }?.let { ErrorText(it.label()) }
     }
 }
 

@@ -6,9 +6,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.provider.Settings
 import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -118,8 +120,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 } finally { toast?.cancel() }
             }
-            val networkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+            val networkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
                 model.refreshNetworkPermission()
+                if (!granted && Build.VERSION.SDK_INT >= 37 &&
+                    !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_LOCAL_NETWORK)
+                ) {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+                }
             }
             LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
                 model.onForeground(canReturn = hasWindowFocus() && canInteract())
@@ -157,7 +164,9 @@ class MainActivity : AppCompatActivity() {
                     onTrackInfoExpanded = model::setTrackInfoExpanded,
                     onReload = model::reloadSettings,
                     onGrantNetworkAccess = {
-                        if (Build.VERSION.SDK_INT >= 37) {
+                        if (Build.VERSION.SDK_INT >= 37 &&
+                            checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
+                        ) {
                             networkPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
                         } else model.reconnect()
                     },

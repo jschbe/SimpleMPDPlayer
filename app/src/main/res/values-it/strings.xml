@@ -19,6 +19,7 @@
     </plurals>
     <string name="timer_custom_option">Personalizzato…</string>
     <string name="timer_custom_done_hint">Premi « Fine » per applicare la durata. Il timer non verrà attivato.</string>
+    <string name="timer_changes_unavailable">Al momento non è possibile modificare il timer.</string>
     <string name="timer_waiting_hint">Il conto alla rovescia completo inizia quando l’app rileva la riproduzione su questo server. Se la riproduzione inizia con l’app chiusa o con un altro server selezionato, potrebbe essere rilevata solo al ritorno nell’app o dopo la riconnessione.</string>
     <string name="track_info_expand">Espandi informazioni brano</string>
     <string name="track_info_collapse">Comprimi informazioni brano</string>
@@ -153,12 +154,8 @@
     <string name="host_not_reachable">Host non raggiungibile. Controlla host e rete.</string>
     <string name="connection_timed_out">Timeout della connessione. Controlla il server e riprova.</string>
     <string name="invalid_mpd_response">Risposta MPD non valida. Verifica che l’endpoint sia di MPD.</string>
-    <string name="connection_recovering">Ripristino automatico · %1$d tentativi su 5 usati</string>
+    <string name="reconnecting">Riconnessione…</string>
     <string name="connection_waiting_network">Rete non disponibile</string>
-    <string name="connection_retries_exhausted">Ripristino automatico interrotto dopo 5 tentativi. Tocca Riconnetti per riprovare.</string>
-    <string name="connection_source_connect">Connessione MPD non riuscita</string>
-    <string name="connection_source_control">Connessione di controllo MPD interrotta</string>
-    <string name="connection_source_idle">Aggiornamenti MPD interrotti; la connessione di controllo resta attiva</string>
     <string name="connection_lost">Connessione persa. Controlla server e rete.</string>
     <string name="mpd_rejected">MPD ha rifiutato il comando. Controlla i permessi del server o la disponibilità del brano selezionato. L’autenticazione con password non è ancora supportata.</string>
     <string name="network_error">Errore di rete. Controlla la connessione e riprova.</string>

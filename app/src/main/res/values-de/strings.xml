@@ -18,6 +18,7 @@
     </plurals>
     <string name="timer_custom_option">Benutzerdefiniert…</string>
     <string name="timer_custom_done_hint">Mit „Fertig“ wird die Dauer übernommen. Der Timer wird dadurch nicht eingeschaltet.</string>
+    <string name="timer_changes_unavailable">Der Timer kann momentan nicht geändert werden.</string>
     <string name="timer_waiting_hint">Der volle Countdown beginnt, sobald die App die Wiedergabe auf diesem Server erkennt. Beginnt sie bei geschlossener App oder bei Auswahl eines anderen Servers, wird sie möglicherweise erst bei der Rückkehr oder nach einer Wiederverbindung erkannt.</string>
     <string name="track_info_expand">Titelinformationen ausklappen</string>
     <string name="track_info_collapse">Titelinformationen einklappen</string>
@@ -152,12 +153,8 @@
     <string name="host_not_reachable">Host nicht erreichbar. Prüfe Host und Netzwerk.</string>
     <string name="connection_timed_out">Zeitüberschreitung bei Verbindung. Prüfe den Server und versuche es erneut.</string>
     <string name="invalid_mpd_response">Ungültige MPD-Antwort. Prüfe, ob der Endpunkt zu MPD gehört.</string>
-    <string name="connection_recovering">Automatische Wiederherstellung · %1$d von 5 Versuchen verbraucht</string>
+    <string name="reconnecting">Verbindung wird wiederhergestellt…</string>
     <string name="connection_waiting_network">Netzwerk nicht verfügbar</string>
-    <string name="connection_retries_exhausted">Automatische Wiederherstellung nach 5 Versuchen beendet. Tippe auf Neu verbinden, um es erneut zu versuchen.</string>
-    <string name="connection_source_connect">MPD-Verbindungsaufbau fehlgeschlagen</string>
-    <string name="connection_source_control">MPD-Steuerverbindung unterbrochen</string>
-    <string name="connection_source_idle">Live-Aktualisierungen von MPD unterbrochen; Steuerverbindung bleibt bestehen</string>
     <string name="connection_lost">Verbindung verloren. Prüfe Server und Netzwerk.</string>
     <string name="mpd_rejected">MPD hat den Befehl abgelehnt. Prüfe Serverberechtigungen oder ob der ausgewählte Titel noch verfügbar ist. Passwortanmeldung wird noch nicht unterstützt.</string>
     <string name="network_error">Netzwerkfehler. Prüfe deine Verbindung und versuche es erneut.</string>
