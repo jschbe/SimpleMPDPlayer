@@ -4,6 +4,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -93,6 +94,81 @@ class BrowserUiTest {
         compose.runOnIdle { assertEquals(2, fallbackBacks); assertEquals(folder, ui.value.browser.path) }
         compose.onNodeWithTag("tab_0").performClick()
         compose.onNodeWithText("A song").assertIsDisplayed()
+    }
+
+    @Test fun rightSwipeGoesUpExactlyOneDirectoryAndPreservesTabNavigationFromNestedBrowser() {
+        show()
+        val child = "$folder/Disc 1"
+        compose.onNodeWithTag("browse_$folder").performTouchInput { click() }
+        compose.onNodeWithTag("browse_$child").performTouchInput { click() }
+        val pager = compose.onNodeWithTag("main_pager")
+        pager.performTouchInput { swipeLeft() }
+        compose.onNodeWithTag("tab_1").assertIsSelected()
+        pager.performTouchInput { swipeRight() }
+        compose.onNodeWithTag("tab_0").assertIsSelected()
+        compose.onNodeWithText("Music library / $child").assertIsDisplayed()
+
+        compose.onNodeWithTag("browser_page").performTouchInput { swipeRight() }
+        compose.onNodeWithText("Music library / $folder").assertIsDisplayed()
+        compose.onNodeWithText("A song").assertIsDisplayed()
+        compose.onNodeWithTag("browser_page").performTouchInput { swipeRight() }
+        compose.onNodeWithText("Music library").assertIsDisplayed()
+        compose.onNodeWithTag("tab_0").assertIsSelected()
+        compose.runOnIdle { assertEquals(listOf("", folder, child, folder, ""), reads) }
+    }
+
+    @Test fun rightSwipeAtRootMakesNoRequestAndBothPagerDirectionsStillWork() {
+        show()
+        val pager = compose.onNodeWithTag("main_pager")
+        pager.performTouchInput { swipeRight() }
+        compose.onNodeWithTag("tab_0").assertIsSelected()
+        compose.onNodeWithText("Music library").assertIsDisplayed()
+
+        pager.performTouchInput { swipeLeft() }
+        compose.onNodeWithTag("tab_1").assertIsSelected()
+        pager.performTouchInput { swipeLeft() }
+        compose.onNodeWithTag("tab_2").assertIsSelected()
+        pager.performTouchInput { swipeRight() }
+        compose.onNodeWithTag("tab_1").assertIsSelected()
+        pager.performTouchInput { swipeRight() }
+        compose.onNodeWithTag("tab_0").assertIsSelected()
+        compose.runOnIdle { assertEquals(listOf(""), reads) }
+    }
+
+    @Test fun diagonalDragsAndVerticalScrollingDoNotChangeTheCurrentDirectory() {
+        listings[folder] = listings.getValue(folder) +
+            (1..50).map { LibraryEntry.Track(MpdSong(null, "$folder/track$it.flac", "Track $it")) }
+        show()
+        compose.onNodeWithTag("browse_$folder").performClick()
+        val list = compose.onNodeWithTag("browser_list")
+        list.performTouchInput {
+            val half = minOf(width, height) * 0.28f
+            swipe(center + Offset(-half, half), center + Offset(half, -half))
+        }
+        compose.onNodeWithTag("tab_0").assertIsSelected()
+        compose.onNodeWithText("Music library / $folder").assertIsDisplayed()
+        list.performTouchInput { swipeUp() }
+        compose.onNodeWithText("A song").assertIsNotDisplayed()
+        compose.runOnIdle { assertEquals(listOf("", folder), reads) }
+    }
+
+    @Test fun rightSwipeKeepsTheParentActionAvailableWhileLoadingOrAfterAnError() {
+        show()
+        val page = compose.onNodeWithTag("browser_page")
+        compose.runOnIdle { ui.value = ui.value.copy(browser = BrowserState(
+            generation = 1, path = "$folder/Disc 1", loading = true,
+        )) }
+        compose.onNodeWithText("Loading folder…").assertIsDisplayed()
+        page.performTouchInput { swipeRight() }
+        compose.onNodeWithText("A song").assertIsDisplayed()
+
+        compose.runOnIdle { ui.value = ui.value.copy(browser = BrowserState(
+            generation = 1, path = folder, error = ConnectionError.MPD_REJECTED,
+        )) }
+        compose.onNodeWithText("Retry").assertIsDisplayed()
+        page.performTouchInput { swipeRight() }
+        compose.onNodeWithText("Music library").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(listOf("", folder, ""), reads) }
     }
 
     @Test fun fileTapAndFolderOverflowOfferAppendAndConfirmedReplaceWithoutPlaying() {

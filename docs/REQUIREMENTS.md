@@ -72,8 +72,10 @@ for instructions, [architecture](ARCHITECTURE.md) for implementation, and
   timer dialog without pressed-state feedback, including when playback
   controls are unavailable. Opening it changes no timer or MPD state.
 - Browse one directory at a time with directories first, names/metadata
-  fallbacks, a path and Up. Android Back goes to the parent while Browser is
-  visible in a subdirectory, including during a pending read. Tab changes
+  fallbacks, a path and Up. Android Back and a clearly horizontal right swipe
+  in a subdirectory go to its parent, including during a pending read. A
+  right swipe at the root leaves the directory unchanged. A left swipe opens
+  Player, and vertical gestures still scroll the listing. Tab changes
   preserve the current listing and scroll. Show loading, empty, disconnected,
   error and oversized states. Skip stored playlists with a notice.
 - Append a file or recursive folder with one MPD add. Replace requires

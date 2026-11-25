@@ -159,7 +159,7 @@ fun ServersApp(
                 }
                 HorizontalPager(state = pager, modifier = Modifier.weight(1f).testTag("main_pager")) { page ->
                     when (page) {
-                        0 -> BrowserScreen(state.browser, connected, controlsEnabled, onBrowse, onEnqueue)
+                        0 -> BrowserScreen(state.browser, connected, controlsEnabled, pager.settledPage == 0, onBrowse, onEnqueue)
                         1 -> PlayerScreen(state, controlsEnabled, onAction, onLocalListening, onTrackInfoExpanded,
                             onOpenSleepTimer = { sleepTimer = true })
                         2 -> QueueScreen(

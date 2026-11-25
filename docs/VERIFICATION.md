@@ -5,6 +5,35 @@ These reports record verification by milestone and review package. The
 describe the current implementation, and [development](DEVELOPMENT.md) explains
 how to reproduce available checks.
 
+## Browser right-swipe navigation
+
+On **2026-11-25**, Debug and the isolated test APKs built successfully. All
+**210 JVM tests** passed. Lint reported **0 errors and 11 existing warnings**.
+The focused Browser and Player navigation suite passed **25 tests** with no
+failures or skips on the offline Medium Phone API 36 emulator using
+`.devicetest`. The tests covered single-level parent navigation, the root
+no-op, loading and error states, diagonal and vertical drags, item taps and
+left/right tab navigation.
+
+## About and offline license presentation
+
+On **2026-11-25**, Debug and both device-test APKs built successfully. All
+**210 JVM tests** passed. Android Lint reported **0 errors and 11 warnings**,
+all in unchanged manifest or resource files. The two legal resources in
+the Debug and device-test APKs matched their source files byte for byte.
+
+The focused Compose run passed **9 tests** with zero failures or skips in
+`.devicetest` on Medium Phone API 36 with no default network. The tests
+opened both complete legal documents through About, checked their final
+paragraphs, and verified Back and Done navigation.
+An instrumentation monitor intercepted the source action and checked the
+GitHub destination. The About dialog did not display the raw URL.
+
+The layout test checked all seven languages in both themes, including an
+additional run with Android's font size set to 200%. It checked the About
+action alignment, touch heights, and availability of the grouped overview and
+full-text action.
+
 ## G2 release preparation for 1.0.0
 
 On **2026-11-25**, G2 started from clean commit `9761509` with both G1 fixes.

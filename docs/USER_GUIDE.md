@@ -68,9 +68,11 @@ freezes until a new readback.
 - **Random** is independent of **Repeat**. Repeat offers **None**, **Queue** and
   **Single**. External stop-after-track, one-shot and unknown modes are displayed
   without silently changing them.
-- **Browser** loads the selected directory. Use **Up** or Android Back to go to
-  its parent. A file tap or a folder's action menu offers **Append to queue** and
-  **Replace queue**. MPD handles folder recursion. Stored playlists are skipped.
+- **Browser** loads the selected directory. Use **Up**, Android Back or
+  swipe right to go to its parent. A right swipe at the root stays there,
+  and swiping left opens Player. A file tap or a folder's action menu offers
+  **Append to queue** and **Replace queue**. MPD handles folder recursion.
+  Stored playlists are skipped.
 - **Queue** highlights the current entry. Tap an entry to play it or use its
   menu to remove it or move it up or down. **Clear queue** requires confirmation.
   Reconnects and server switches dismiss old queue menus and confirmations.

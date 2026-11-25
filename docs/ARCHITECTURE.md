@@ -105,9 +105,13 @@ actual state. Lost exchanges never replay mutations.
   version/length against fresh status. Open menus and confirmations belong
   to the live control-session token and are excluded from saved state.
 - Browser keeps one `lsinfo` listing. Request numbers reject superseded replies.
-  Up/Back can queue a parent behind a pending exchange without closing a healthy
-  socket. A directory ACK stays browser-local. Overflow preserves the requested
-  path through control recovery and requires explicit Retry or Up.
+  Up, Android Back and Browser's right swipe share the generation-bound parent
+  request and can queue it behind a pending exchange without closing a healthy
+  socket. The swipe claims a clearly rightward drag at touch slop on the settled
+  Browser page and requests the parent on release. Left swipes stay with the
+  pager and vertical drags stay with the list. A directory ACK stays
+  browser-local. Overflow preserves the requested path through control
+  recovery and requires explicit Retry or Up.
 - Replace serializes clear/add/readback within the app. Other MPD clients can
   interleave and the protocol has no rollback. An ACK, lost acknowledgement or
   readback failure is reported according to which steps completed. The server

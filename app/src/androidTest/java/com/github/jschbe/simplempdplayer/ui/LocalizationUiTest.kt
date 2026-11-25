@@ -1,6 +1,9 @@
 package com.github.jschbe.simplempdplayer.ui
 
+import android.app.Activity
+import android.app.Instrumentation
 import android.app.LocaleManager
+import android.content.Intent
 import android.content.res.Configuration
 import android.content.res.Resources
 import android.os.Build
@@ -10,6 +13,7 @@ import androidx.core.os.LocaleListCompat
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso.pressBack
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.lifecycle.Lifecycle
 import com.github.jschbe.simplempdplayer.MainActivity
@@ -22,6 +26,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicReference
 
 class LocalizationUiTest {
     @get:Rule val compose = createEmptyComposeRule()
@@ -143,15 +148,64 @@ class LocalizationUiTest {
         compose.onNodeWithText("SimpleMPDPlayer").assertIsDisplayed()
         compose.onNodeWithText("Version ${BuildConfig.VERSION_NAME}").assertIsDisplayed()
         compose.onNodeWithText("GPL-3.0-or-later").assertIsDisplayed()
-        compose.onNodeWithText("Read license").performClick()
-        compose.waitUntil(5_000) { compose.onAllNodesWithText("Version 3, 29 June 2007", substring = true).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Version 3, 29 June 2007", substring = true).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.license_warranty)).assertIsDisplayed()
+        compose.onNodeWithText("GNU GPL v3 or later").performClick()
+        assertBundledDocument(R.raw.gpl_v3, "Version 3, 29 June 2007")
         compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("About").assertIsDisplayed()
+
         compose.onNodeWithText("Third-party licenses").performScrollTo().performClick()
-        compose.waitUntil(5_000) { compose.onAllNodesWithText("Third-party software notices", substring = true).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Third-party software notices", substring = true).assertIsDisplayed()
-        val context = instrumentation.targetContext
-        assertTrue(context.resources.openRawResource(R.raw.third_party_notices).bufferedReader().use { it.readText() }.contains("Apache License"))
+        compose.onNodeWithText("Third-party licenses").assertIsDisplayed()
+        compose.onNodeWithText("AndroidX / Jetpack / Compose").assertIsDisplayed()
+        compose.onNodeWithText("Protocol Buffers").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Apache-2.0, BSD-3-Clause, BSL-1.0").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("androidx.activity:activity-compose", substring = true).assertDoesNotExist()
+        compose.onNodeWithTag("legal_text").assertDoesNotExist()
+
+        compose.onNodeWithText("Full license texts and notices").performScrollTo().performClick()
+        assertBundledDocument(R.raw.third_party_notices, "Third-party software notices")
+        pressBack()
+        compose.onNodeWithText("Third-party licenses").assertIsDisplayed()
+        compose.onNodeWithText("Full license texts and notices").performScrollTo().performClick()
+        compose.onNodeWithTag("legal_text").assertIsDisplayed()
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("Third-party licenses").assertIsDisplayed()
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("About").assertIsDisplayed()
+    }
+
+    @Test fun aboutOpensTheSourceRepositoryWithoutDisplayingTheAddress() {
+        val repository = "https://github.com/jschbe/SimpleMPDPlayer"
+        val opened = AtomicReference<String>()
+        val monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                if (intent.action != Intent.ACTION_VIEW) return null
+                opened.set(intent.dataString)
+                return Instrumentation.ActivityResult(Activity.RESULT_OK, null)
+            }
+        }
+        instrumentation.addMonitor(monitor)
+        try {
+            open(R.string.about)
+            compose.onNodeWithText(repository, substring = true).assertDoesNotExist()
+            compose.onNodeWithText(text(R.string.open_source)).performScrollTo().performClick()
+            assertEquals(repository, opened.get())
+            compose.onNodeWithText(text(R.string.about)).assertIsDisplayed()
+        } finally {
+            instrumentation.removeMonitor(monitor)
+        }
+    }
+
+    private fun assertBundledDocument(resource: Int, heading: String) {
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText(heading, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText(heading, substring = true).assertIsDisplayed()
+        val paragraphs = instrumentation.targetContext.resources.openRawResource(resource)
+            .bufferedReader().use { it.readText() }.split("\n\n")
+        val last = paragraphs.indexOfLast { it.isNotBlank() }
+        compose.onNodeWithTag("legal_text").performScrollToIndex(last)
+        compose.onNodeWithText(paragraphs[last]).assertIsDisplayed()
     }
 
     @Test fun timerPluralSelectionUsesAndroidRulesForRussianAndUkrainian() {

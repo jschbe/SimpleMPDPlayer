@@ -34,6 +34,66 @@ import org.junit.Test
 class LocalizedLayoutTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
+    @Test fun aboutActionsAndLicenseOverviewFitDoubleFontSizeInEveryLanguageAndTheme() {
+        val tag = mutableStateOf("en")
+        val theme = mutableStateOf(ThemeMode.LIGHT)
+        val context = compose.activity
+        compose.activityRule.scenario.onActivity { it.setShowWhenLocked(true); it.setTurnScreenOn(true) }
+        fun localized(language: String) = context.createConfigurationContext(
+            Configuration(context.resources.configuration).apply { setLocale(Locale.forLanguageTag(language)) },
+        ).resources
+        compose.setContent {
+            val density = LocalDensity.current
+            val resources = remember(tag.value) { localized(tag.value) }
+            CompositionLocalProvider(LocalResources provides resources, LocalDensity provides Density(density.density, 2f)) {
+                SimpleMPDPlayerTheme(mode = theme.value) {
+                    key(tag.value, theme.value) { AboutDialog {} }
+                }
+            }
+        }
+
+        for (mode in listOf(ThemeMode.LIGHT, ThemeMode.DARK)) {
+            for (language in listOf("en", "de", "fr", "it", "es", "uk", "ru")) {
+                compose.runOnIdle { tag.value = language; theme.value = mode }
+                val resources = localized(language)
+                fun label(id: Int) = resources.getString(id)
+                fun visibleText(text: String) = compose.onNodeWithText(text, useUnmergedTree = true)
+                    .performScrollTo().assertIsDisplayed()
+                val left = visibleText(label(R.string.app_license)).getUnclippedBoundsInRoot().left.value
+                for (id in listOf(R.string.gpl_license_link, R.string.third_party_licenses, R.string.open_source)) {
+                    val button = compose.onNodeWithText(label(id)).performScrollTo().assertIsDisplayed().assertHasClickAction()
+                    val bounds = button.getUnclippedBoundsInRoot()
+                    assertTrue("$language/$mode/$id touch height", bounds.bottom - bounds.top >= 48.dp)
+                    val node = visibleText(label(id))
+                    assertEquals("$language/$mode/$id left alignment", left, node.getUnclippedBoundsInRoot().left.value, 0.5f)
+                    val layouts = mutableListOf<TextLayoutResult>()
+                    node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+                    assertFalse("$language/$mode/$id text overflow", layouts.single().hasVisualOverflow)
+                    assertEquals(0f, layouts.single().getLineLeft(0), 0.5f)
+                }
+                compose.onNodeWithText(label(R.string.third_party_licenses)).performScrollTo().performClick()
+                for (id in listOf(R.string.third_party_intro, R.string.license_component_androidx,
+                    R.string.license_component_media3, R.string.license_component_kotlin, R.string.license_kotlin,
+                    R.string.license_component_guava, R.string.license_component_okio, R.string.license_component_protobuf,
+                    R.string.license_bsd)) {
+                    val layout = mutableListOf<TextLayoutResult>()
+                    visibleText(label(id)).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layout) }
+                    val measured = layout.single()
+                    val description = "$language/$mode ${label(id)}"
+                    assertFalse("$description overview overflow", measured.hasVisualOverflow)
+                    for (line in 0 until measured.lineCount) {
+                        assertTrue("$description line $line exceeds the text bounds",
+                            measured.getLineRight(line) <= measured.size.width + 0.5f)
+                    }
+                }
+                compose.onAllNodesWithText(label(R.string.license_apache)).assertCountEquals(4)
+                compose.onNodeWithText(label(R.string.full_license_texts)).performScrollTo().assertIsDisplayed()
+                    .assertHasClickAction()
+                compose.onNodeWithText(label(R.string.done)).assertIsDisplayed().assertHasClickAction()
+            }
+        }
+    }
+
     @Test fun connectionActionsWrapAtDoubleFontSizeInAllLocalesAndThemes() {
         val tag = mutableStateOf("de")
         val mode = mutableStateOf(ThemeMode.SYSTEM)

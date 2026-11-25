@@ -4,8 +4,8 @@
 
 The app supports en/de/fr/it/es/uk/ru, with complete unqualified English
 fallback and six translations. There are now
-**215 strings and one plural name (216 names / 217 English CSV rows)**.
-`strings-en.csv` remains the canonical English review catalog. The 19 language,
+**226 strings and one plural name (227 names / 228 English CSV rows)**.
+`strings-en.csv` remains the canonical English review catalog. The language,
 About and legal-navigation strings and the six queue and response-limit strings
 include review context. The six queue and limit strings are available in all
 seven languages and introduce no format arguments or plural branches. The
@@ -26,7 +26,7 @@ errors. The only changes to existing resources were adding `many` to French,
 Italian and Spanish `timer_duration_minutes`, as required by Lint/CLDR; each uses
 the existing plural wording. That category covers million-value cases outside
 the unchanged 1–1440 timer range. Russian/Ukrainian already supplied correct
-one/few/many/other branches. German wording was preserved. All 19 new entries
+one/few/many/other branches. German wording was preserved. All 19 M7.2 entries
 are translated in all catalogs (native autonyms, SPDX identifier and URL remain
 literal by design).
 
@@ -38,8 +38,10 @@ restarting HTTP/ExoPlayer/session. Android and Media3 still own stock/accessibil
 notification controls; OS/OEM presentation can follow the system locale.
 
 About supplies localized navigation to the build version, GPL-3.0-or-later,
-complete offline GPL and third-party notices, and selectable public source URL.
-Original legal texts are preserved in English. See [license audit](LICENSING.md).
+complete offline GPL, a third-party license overview and the public source
+repository action. The overview preserves library names and SPDX identifiers
+and links to the full offline notices. Original legal texts stay in English.
+See [license audit](LICENSING.md).
 
 See [localization verification](VERIFICATION.md#m72-localization-and-licensing)
 for XML/CSV/type/argument checks, Android language selection and restoration,
