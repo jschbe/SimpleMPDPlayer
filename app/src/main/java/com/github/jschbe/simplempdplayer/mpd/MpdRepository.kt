@@ -1,6 +1,9 @@
 package com.github.jschbe.simplempdplayer.mpd
 
 import com.github.jschbe.simplempdplayer.data.ServerProfile
+import com.github.jschbe.simplempdplayer.data.CredentialException
+import com.github.jschbe.simplempdplayer.data.NoMpdCredentials
+import com.github.jschbe.simplempdplayer.timer.TimerError
 import java.io.EOFException
 import java.io.IOException
 import java.net.ConnectException
@@ -31,6 +34,7 @@ enum class ConnectionCheckTrigger { FOREGROUND, WINDOW_FOCUS, NETWORK, QUEUE_RET
 enum class ConnectionError {
     REFUSED, UNREACHABLE, TIMEOUT, INVALID_RESPONSE, LOST, MPD_REJECTED, NETWORK, PERMISSION_REQUIRED,
     RESPONSE_LIMIT, QUEUE_CHANGED,
+    PASSWORD_REJECTED, MPD_PERMISSION, CREDENTIAL_MISSING, CREDENTIAL_UNREADABLE, PASSWORD_REENTRY, INVALID_PASSWORD,
 }
 
 data class ConnectionState(
@@ -67,6 +71,7 @@ class MpdRepository(
     private val nanoTime: () -> Long = System::nanoTime,
     private val diagnostics: (String) -> Unit = {},
     private val elapsedMillis: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val resolvePassword: suspend (ServerProfile) -> String? = NoMpdCredentials::resolve,
 ) {
     private class Session(val command: MpdConnection, var events: MpdConnection?, val work: Job) {
         val operations = Mutex()
@@ -104,11 +109,14 @@ class MpdRepository(
     private val networkAvailable = MutableStateFlow(true)
 
     /** Probe only greeting/ping; never replace the active command/event session. */
-    suspend fun testConnection(server: ServerProfile): ConnectionError? {
+    suspend fun testConnection(
+        server: ServerProfile,
+        password: suspend (ServerProfile) -> String? = resolvePassword,
+    ): ConnectionError? {
         val probe = connectionFactory()
         return try {
-            probe.connect(server.host, server.mpdPort)
-            probe.ping()
+            probe.openMpd(server, password)
+            readStatus(probe)
             null
         } catch (error: IOException) {
             classify(error)
@@ -134,6 +142,13 @@ class MpdRepository(
         } else {
             startConnection()
         }
+    }
+
+    internal fun invalidateCredential(old: ServerProfile) {
+        val active = activeServer ?: return
+        if (active.id == old.id && active.credentialRevision == old.credentialRevision &&
+            active.sameControlEndpoint(old)
+        ) close()
     }
 
     private fun startConnection() {
@@ -166,7 +181,7 @@ class MpdRepository(
         session = current
         mutableState.update { it.copy(status = ConnectionStatus.CONNECTING, commandPending = false, sessionId = ++nextSessionId) }
         try {
-            current.command.connect(server.host, server.mpdPort)
+            current.command.openMpd(server, resolvePassword)
             current.command.ping()
             current.operations.withLock { refresh(current, forceQueue = true) }
             if (!isCurrent(current)) return
@@ -196,7 +211,7 @@ class MpdRepository(
         val server = activeServer ?: return
         val events = current.events ?: connectionFactory().also { current.events = it }
         try {
-            events.connect(server.host, server.mpdPort)
+            events.openMpd(server, resolvePassword)
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: IOException) { idleFailed(current, events, classify(error)); return }
         catch (_: SecurityException) { idleFailed(current, events, ConnectionError.PERMISSION_REQUIRED); return }
@@ -377,8 +392,8 @@ class MpdRepository(
                         } else {
                             executeAction(current.command, action, stillAuthorized)
                         }
-                    } catch (_: MpdAckException) {
-                        if (session === current) mutableState.update { it.copy(commandError = ConnectionError.MPD_REJECTED) }
+                    } catch (error: MpdAckException) {
+                        if (session === current) mutableState.update { it.copy(commandError = classify(error)) }
                     }
                     // The server remains authoritative, including after a rejected queue operation.
                     refresh(current)
@@ -431,9 +446,9 @@ class MpdRepository(
                 }
                 // There may still be unread fields and the terminator on this socket.
                 fail(current, ConnectionError.RESPONSE_LIMIT)
-            } catch (_: MpdAckException) {
+            } catch (error: MpdAckException) {
                 if (isCurrent(current) && request == current.browserRequest) {
-                    mutableBrowser.update { it.copy(loading = false, error = ConnectionError.MPD_REJECTED) }
+                    mutableBrowser.update { it.copy(loading = false, error = classify(error)) }
                 }
             } catch (error: IOException) {
                 fail(current, classify(error))
@@ -481,7 +496,11 @@ class MpdRepository(
                         current.command.execute("add", uri)
                         added = true
                         currentCoroutineContext().ensureActive()
-                    } catch (_: MpdAckException) {
+                    } catch (error: MpdAckException) {
+                        val accessDenied = error.code == ACK_PASSWORD || error.code == ACK_PERMISSION
+                        if (accessDenied && isCurrent(current)) mutableState.update {
+                            it.copy(commandError = classify(error), commandErrorFromQueue = false)
+                        }
                         rejection = if (replace && !cleared) BrowserQueueMessage.CLEAR_FAILED else failedMessage()
                         message(rejection!!)
                         refresh(current)
@@ -774,7 +793,12 @@ class MpdRepository(
     private fun classify(error: IOException): ConnectionError = when (error) {
         is InvalidMpdResponse -> ConnectionError.INVALID_RESPONSE
         is MpdResponseLimit -> ConnectionError.RESPONSE_LIMIT
-        is MpdAckException -> ConnectionError.MPD_REJECTED
+        is MpdAckException -> when (error.code) {
+            ACK_PASSWORD -> ConnectionError.PASSWORD_REJECTED
+            ACK_PERMISSION -> ConnectionError.MPD_PERMISSION
+            else -> ConnectionError.MPD_REJECTED
+        }
+        is CredentialException -> error.connectionError()
         is SocketTimeoutException -> ConnectionError.TIMEOUT
         is UnknownHostException, is NoRouteToHostException -> ConnectionError.UNREACHABLE
         is ConnectException -> if (error.message.orEmpty().contains("refused", ignoreCase = true)) {
@@ -797,31 +821,37 @@ class MpdRepository(
             server: ServerProfile,
             resolve: suspend (String) -> String = { it },
             factory: () -> MpdConnection = { MpdClient(2_000, 2_000, 2_500) },
-        ): com.github.jschbe.simplempdplayer.timer.TimerError? {
+            resolvePassword: suspend (ServerProfile) -> String? = NoMpdCredentials::resolve,
+        ): TimerError? {
             val client = factory()
             return try {
                 kotlinx.coroutines.withTimeout(6_000) {
                     require(server.isValid())
-                    val host = resolve(server.host)
-                    client.connect(host, server.mpdPort)
+                    client.openMpd(server, resolvePassword) { resolve(server.host) }
                     if (client.execute("pause", "1").isNotEmpty()) throw InvalidMpdResponse()
                 }
                 null
             } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
                 currentCoroutineContext().ensureActive()
-                com.github.jschbe.simplempdplayer.timer.TimerError.TIMEOUT
+                TimerError.TIMEOUT
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (ack: MpdAckException) {
-                if (ack.code == 3 || ack.code == 4) com.github.jschbe.simplempdplayer.timer.TimerError.AUTHENTICATION
-                else com.github.jschbe.simplempdplayer.timer.TimerError.REJECTED
+                when (ack.code) {
+                    ACK_PASSWORD -> TimerError.PASSWORD_REJECTED
+                    ACK_PERMISSION -> TimerError.MPD_PERMISSION
+                    else -> TimerError.REJECTED
+                }
+            } catch (error: CredentialException) {
+                if (error.connectionError() == ConnectionError.CREDENTIAL_MISSING) TimerError.CREDENTIAL_MISSING
+                else TimerError.CREDENTIAL_UNREADABLE
             } catch (_: SocketTimeoutException) {
-                com.github.jschbe.simplempdplayer.timer.TimerError.TIMEOUT
+                TimerError.TIMEOUT
             } catch (_: InvalidMpdResponse) {
-                com.github.jschbe.simplempdplayer.timer.TimerError.PROTOCOL
+                TimerError.PROTOCOL
             } catch (_: SecurityException) {
-                com.github.jschbe.simplempdplayer.timer.TimerError.PERMISSION
+                TimerError.PERMISSION
             } catch (_: IOException) {
-                com.github.jschbe.simplempdplayer.timer.TimerError.NETWORK
+                TimerError.NETWORK
             } finally { client.close() }
         }
     }

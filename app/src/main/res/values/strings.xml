@@ -47,7 +47,7 @@
     <string name="timer_error_network">Pause could not be confirmed. Check the server and network. No automatic retry.</string>
     <string name="timer_error_timeout">Pause timed out; delivery may be uncertain. No automatic retry.</string>
     <string name="timer_error_rejected">MPD rejected Pause. Check server permissions.</string>
-    <string name="timer_error_authentication">MPD requires authentication or permission for Pause. Passwords are not supported.</string>
+    <string name="timer_error_authentication">MPD denied access for the sleep timer. Check the server permissions and the profile password.</string>
     <string name="timer_error_permission">Pause could not be delivered. Check Android local network permission.</string>
     <string name="timer_error_protocol">The server response could not be validated. Pause is unconfirmed.</string>
     <string name="timer_error_scheduling">Android could not register the timer, or registration was interrupted. Enable it to try again.</string>
@@ -155,7 +155,7 @@
     <string name="reconnecting">Reconnecting…</string>
     <string name="connection_waiting_network">Network unavailable</string>
     <string name="connection_lost">Connection lost. Check the server and network.</string>
-    <string name="mpd_rejected">MPD rejected the command. Check server permissions or whether the selected track is still available. Password authentication is not supported yet.</string>
+    <string name="mpd_rejected">MPD rejected the command. Check server permissions or whether the selected track is still available.</string>
     <string name="network_error">Network error. Check your connection and try again.</string>
     <string name="allow_local_network">Allow local network</string>
     <string name="local_network_permission_required">Local network access is required to connect to your MPD server. Allow access, or enable Nearby devices in app settings if the permission prompt no longer appears.</string>
@@ -205,4 +205,19 @@
     <string name="clear_queue_unavailable_message">The queue could not be displayed. Remove all tracks from the active MPD queue?</string>
     <string name="library_listing_limit">This folder listing is too large to display.</string>
     <string name="mpd_response_limit">An MPD response exceeded the loading limit.</string>
+    <string name="mpd_password">MPD password</string>
+    <string name="password_keep">Keep saved password</string>
+    <string name="password_replace">Replace password</string>
+    <string name="password_remove">Use no password</string>
+    <string name="password_backup_hint">Passwords stay on this device. Enter them again after a restore.</string>
+    <string name="password_reentry">Enter the password for this MPD host and port or choose to use no password.</string>
+    <string name="password_invalid">Enter a valid password without line breaks or NUL characters.</string>
+    <string name="password_save_failed">Could not save the password on this device. Try again.</string>
+    <string name="password_needed_status">MPD password needed</string>
+    <string name="password_rejected_status">MPD password rejected</string>
+    <string name="mpd_access_denied_status">MPD access denied</string>
+    <string name="password_missing_detail">Enter the MPD password again in Edit server. It is missing on this device.</string>
+    <string name="password_unreadable_detail">The saved password cannot be read. Enter it again in Edit server.</string>
+    <string name="password_rejected_detail">MPD rejected the password. Check it in Edit server.</string>
+    <string name="mpd_access_denied_detail">MPD denied this command. Check the server permissions and the profile password.</string>
 </resources>

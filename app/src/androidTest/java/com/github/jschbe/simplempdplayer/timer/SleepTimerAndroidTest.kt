@@ -1,9 +1,11 @@
 package com.github.jschbe.simplempdplayer.timer
 
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -20,6 +22,7 @@ import com.github.jschbe.simplempdplayer.mpd.*
 import kotlin.concurrent.thread
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.withLock
 import org.junit.After
@@ -33,8 +36,8 @@ import org.junit.runner.RunWith
 class SleepTimerAndroidTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val app = instrumentation.targetContext.applicationContext as PlayerApplication
-    private val profiles = ServerSettingsStore(app.serverDataStore)
-    private val storage = SleepTimerStore(app.sleepTimerDataStore)
+    private val profiles = app.serverSettings
+    private val storage = SleepTimerStore(app.sleepTimerDataStore, app.serverDataStore)
     private val scheduler = AndroidTimerScheduler(app)
     private val clock = AndroidTimerClock(app)
     private lateinit var mpd: TimerMpdFixture
@@ -111,7 +114,7 @@ class SleepTimerAndroidTest {
         assertFalse(scheduler.hasPendingIntent())
         assertEquals(com.github.jschbe.simplempdplayer.audio.StreamPhase.OFF, app.localStream.state.value.phase)
         assertTrue(mpd.allCommands.all { it == "pause \"1\"" })
-        val reloaded = SleepTimerStore(app.sleepTimerDataStore).read()
+        val reloaded = SleepTimerStore(app.sleepTimerDataStore, app.serverDataStore).read()
         assertEquals(TimerStatus.COMPLETED, reloaded.record!!.status)
     }
 
@@ -135,7 +138,7 @@ class SleepTimerAndroidTest {
         due()
         pendingIntent()!!.send()
         await { app.sleepTimer.state.value.settings.record?.status == TimerStatus.FAILED }
-        assertEquals(TimerError.AUTHENTICATION, storage.read().record!!.error)
+        assertEquals(TimerError.MPD_PERMISSION, storage.read().record!!.error)
         assertEquals(listOf("pause \"1\""), mpd.mutations)
         app.sleepTimer.refresh()
         assertEquals(1, mpd.mutations.size)
@@ -168,6 +171,63 @@ class SleepTimerAndroidTest {
         awaitActual("durable completion") { storage.read().record?.status == TimerStatus.COMPLETED }
         assertEquals(record.copy(status = TimerStatus.COMPLETED), storage.read().record)
         assertEquals(listOf("pause \"1\""), mpd.allCommands)
+        assertFalse(scheduler.hasPendingIntent())
+    }
+
+    @Test fun actualAlarmWhileLockedUsesLatestPasswordOfNonSelectedTarget() = runBlocking {
+        val other = ServerInput("Other timer profile", "127.0.0.1", "1").toProfile()!!
+        val initialPassword = " synthetic old ♫ "
+        val currentPassword = " synthetic \"new\" \\ "
+        val lockDisabled = shell("locksettings get-disabled").trim() == "true"
+        try {
+            if (lockDisabled) shell("locksettings set-disabled false")
+            profiles.saveAndSelect(target, PasswordEdit.Replace(initialPassword))
+            val record = profileMutationLock.withLock { scheduleActualAlarm() }
+            profiles.saveAndSelect(target, PasswordEdit.Replace(currentPassword))
+            profiles.saveAndSelect(other)
+            mpd.requiredPassword = currentPassword
+            assertEquals(record, storage.read().record)
+            assertEquals(other.id, profiles.settings.first().selectedId)
+            val keyguard = app.getSystemService(KeyguardManager::class.java)
+            val power = app.getSystemService(PowerManager::class.java)
+            shell("input keyevent KEYCODE_SLEEP")
+            awaitActual("sleeping, locked display", timeoutMillis = 4_000) {
+                !power.isInteractive && keyguard.isKeyguardLocked &&
+                    (!keyguard.isDeviceSecure || keyguard.isDeviceLocked)
+            }
+            awaitActual("authenticated alarm completion") { storage.read().record?.status == TimerStatus.COMPLETED }
+            assertTrue(keyguard.isKeyguardLocked)
+            assertEquals(record.copy(status = TimerStatus.COMPLETED), storage.read().record)
+            assertEquals(listOf("password", "pause \"1\""), mpd.allCommands)
+            assertEquals(listOf("pause \"1\""), mpd.mutations)
+            assertFalse(scheduler.hasPendingIntent())
+            assertTrue(app.sleepTimer.fire(record.token))
+            assertEquals(1, mpd.mutations.size)
+        } finally {
+            shell("input keyevent KEYCODE_WAKEUP")
+            shell("wm dismiss-keyguard")
+            if (lockDisabled) shell("locksettings set-disabled true")
+            profiles.delete(other.id)
+        }
+    }
+
+    @Test fun missingAndRejectedPasswordPersistDistinctErrorsWithoutGuestPause() = runBlocking {
+        profiles.saveAndSelect(target, PasswordEdit.Replace(" synthetic fixture "))
+        val saved = profiles.settings.first().servers.first { it.id == target.id }
+        mpd.requiredPassword = "different synthetic fixture"
+        val rejected = due()
+        pendingIntent().send()
+        awaitActual("persisted password rejection") { storage.read().record?.error == TimerError.PASSWORD_REJECTED }
+        assertEquals(rejected.copy(status = TimerStatus.FAILED, error = TimerError.PASSWORD_REJECTED), storage.read().record)
+        assertEquals(listOf("password"), mpd.allCommands)
+        assertTrue(mpd.mutations.isEmpty())
+        app.credentials.remove(requireNotNull(saved.credentialRevision))
+        val missing = due()
+        pendingIntent().send()
+        awaitActual("persisted missing credential") { storage.read().record?.error == TimerError.CREDENTIAL_MISSING }
+        assertEquals(missing.copy(status = TimerStatus.FAILED, error = TimerError.CREDENTIAL_MISSING), storage.read().record)
+        assertEquals(listOf("password"), mpd.allCommands)
+        assertTrue(mpd.mutations.isEmpty())
         assertFalse(scheduler.hasPendingIntent())
     }
 
@@ -207,6 +267,10 @@ class SleepTimerAndroidTest {
         return dump.substringAfter(" pending alarms:", "").substringBefore("LazyAlarmStore stats:")
             .lineSequence().any { it.trim() == "tag=*walarm*:${AndroidTimerScheduler.ACTION}" }
     }
+
+    private fun shell(command: String): String =
+        ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
+            .bufferedReader().use { it.readText() }
 
     private suspend fun awaitActual(event: String, timeoutMillis: Long = 75_000, condition: suspend () -> Boolean) {
         try {
@@ -248,6 +312,7 @@ internal class TimerMpdFixture : AutoCloseable {
     @Volatile private var playbackState = "stop"
     fun playback(value: String) { playbackState = value; events.offer(Unit) }
     @Volatile var ackCode: Int? = null
+    @Volatile var requiredPassword: String? = null
     @Volatile var holdAcknowledgement = false
     @Volatile private var closed = false
     init {
@@ -262,9 +327,21 @@ internal class TimerMpdFixture : AutoCloseable {
                             val writer = it.getOutputStream().bufferedWriter()
                             fun send(value: String) { writer.write(value); writer.flush() }
                             send("OK MPD 0.23.0\n")
+                            var authenticated = false
                             while (!closed) {
                                 val command = reader.readLine() ?: break
+                                if (command.startsWith("password ")) {
+                                    allCommands.add("password")
+                                    val expected = requiredPassword
+                                    authenticated = expected != null && command == MpdProtocol.command("password", listOf(expected)).trimEnd('\n')
+                                    if (authenticated) send("OK\n") else send("ACK [3@0] {password} Private detail\n")
+                                    continue
+                                }
                                 allCommands.add(command)
+                                if (requiredPassword != null && !authenticated) {
+                                    send("ACK [4@0] {${command.substringBefore(' ')}} Private detail\n")
+                                    continue
+                                }
                                 when (command.substringBefore(' ')) {
                                     "pause" -> {
                                         mutations.add(command)

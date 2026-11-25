@@ -49,7 +49,7 @@
     <string name="timer_error_network">Pause n’a pas pu être confirmée. Vérifiez le serveur et le réseau. Aucun nouvel essai automatique.</string>
     <string name="timer_error_timeout">Délai d’attente de Pause dépassé ; l’exécution est incertaine. Aucun nouvel essai automatique.</string>
     <string name="timer_error_rejected">MPD a refusé Pause. Vérifiez les autorisations du serveur.</string>
-    <string name="timer_error_authentication">MPD exige une authentification ou une autorisation pour Pause. Les mots de passe ne sont pas pris en charge.</string>
+    <string name="timer_error_authentication">MPD a refusé l’accès au minuteur de veille. Vérifiez les autorisations du serveur et le mot de passe du profil.</string>
     <string name="timer_error_permission">Impossible d’envoyer Pause. Vérifiez l’autorisation d’accès au réseau local Android.</string>
     <string name="timer_error_protocol">La réponse du serveur n’a pas pu être validée. Pause n’est pas confirmée.</string>
     <string name="timer_error_scheduling">Android n’a pas pu enregistrer la minuterie ou l’enregistrement a été interrompu. Réactivez-la.</string>
@@ -157,7 +157,7 @@
     <string name="reconnecting">Reconnexion…</string>
     <string name="connection_waiting_network">Réseau indisponible</string>
     <string name="connection_lost">Connexion perdue. Vérifiez le serveur et le réseau.</string>
-    <string name="mpd_rejected">MPD a refusé la commande. Vérifiez les autorisations du serveur ou la disponibilité du morceau sélectionné. L’authentification par mot de passe n’est pas encore prise en charge.</string>
+    <string name="mpd_rejected">MPD a refusé la commande. Vérifiez les autorisations du serveur ou la disponibilité du morceau sélectionné.</string>
     <string name="network_error">Erreur réseau. Vérifiez votre connexion et réessayez.</string>
     <string name="allow_local_network">Autoriser le réseau local</string>
     <string name="local_network_permission_required">L’accès au réseau local est nécessaire pour se connecter à votre serveur MPD. Autorisez cet accès ou activez « Appareils à proximité » dans les paramètres de l’application si la demande n’apparaît plus.</string>
@@ -207,4 +207,19 @@
     <string name="clear_queue_unavailable_message">La file ne peut pas être affichée. Supprimer tous les titres de la file MPD active ?</string>
     <string name="library_listing_limit">Ce dossier contient trop de données pour être affiché.</string>
     <string name="mpd_response_limit">Une réponse MPD a dépassé la limite de chargement.</string>
+    <string name="mpd_password">Mot de passe MPD</string>
+    <string name="password_keep">Conserver le mot de passe enregistré</string>
+    <string name="password_replace">Remplacer le mot de passe</string>
+    <string name="password_remove">Ne pas utiliser de mot de passe</string>
+    <string name="password_backup_hint">Les mots de passe restent sur cet appareil. Saisissez-les de nouveau après une restauration.</string>
+    <string name="password_reentry">Saisissez le mot de passe pour cet hôte et ce port MPD ou choisissez de ne pas utiliser de mot de passe.</string>
+    <string name="password_invalid">Saisissez un mot de passe valide, sans saut de ligne ni caractère NUL.</string>
+    <string name="password_save_failed">Impossible d’enregistrer le mot de passe sur cet appareil. Réessayez.</string>
+    <string name="password_needed_status">Mot de passe MPD requis</string>
+    <string name="password_rejected_status">Mot de passe MPD refusé</string>
+    <string name="mpd_access_denied_status">Accès MPD refusé</string>
+    <string name="password_missing_detail">Saisissez de nouveau le mot de passe MPD dans Modifier le serveur. Il manque sur cet appareil.</string>
+    <string name="password_unreadable_detail">Le mot de passe enregistré est illisible. Saisissez-le de nouveau dans Modifier le serveur.</string>
+    <string name="password_rejected_detail">MPD a refusé le mot de passe. Vérifiez-le dans Modifier le serveur.</string>
+    <string name="mpd_access_denied_detail">MPD a refusé cette commande. Vérifiez les autorisations du serveur et le mot de passe du profil.</string>
 </resources>

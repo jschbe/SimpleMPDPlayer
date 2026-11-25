@@ -261,7 +261,7 @@ class LocalStreamServiceTest {
         assertEquals(listOf("play"), fixture.mutations())
         fixture.reject = "pause"
         main { controller.pause() }
-        waitFor { app.repository.state.value.commandError == com.github.jschbe.simplempdplayer.mpd.ConnectionError.MPD_REJECTED && controller.isCommandAvailable(Player.COMMAND_PLAY_PAUSE) }
+        waitFor { app.repository.state.value.commandError == com.github.jschbe.simplempdplayer.mpd.ConnectionError.MPD_PERMISSION && controller.isCommandAvailable(Player.COMMAND_PLAY_PAUSE) }
         main { assertTrue(controller.isPlaying) }
         assertEquals(ConnectionStatus.CONNECTED, app.repository.state.value.status)
         assertEquals(listOf("play", "pause \"1\""), fixture.mutations())

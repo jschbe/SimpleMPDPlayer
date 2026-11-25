@@ -8,6 +8,9 @@ import com.github.jschbe.simplempdplayer.timer.MAX_SLEEP_MINUTES
 import com.github.jschbe.simplempdplayer.timer.SleepTimerController
 import com.github.jschbe.simplempdplayer.timer.SleepTimerState
 import com.github.jschbe.simplempdplayer.data.ServerProfile
+import com.github.jschbe.simplempdplayer.data.CredentialException
+import com.github.jschbe.simplempdplayer.data.CredentialFailure
+import com.github.jschbe.simplempdplayer.data.PasswordEdit
 import com.github.jschbe.simplempdplayer.data.DuplicateServerNameException
 import com.github.jschbe.simplempdplayer.data.ServerSettings
 import com.github.jschbe.simplempdplayer.data.ServerSettingsStore
@@ -26,6 +29,7 @@ data class ServerEditor(
     val token: Long = 0,
     val testing: Boolean = false,
     val testError: ConnectionError? = null,
+    val passwordSaveFailed: Boolean = false,
 )
 
 enum class NoticeMessage { MPD_AVAILABLE, MPD_UNAVAILABLE, CONNECTED, CONNECTION_FAILED }
@@ -188,14 +192,22 @@ class ServersViewModel(
         }
     }
 
-    fun test(server: ServerProfile) {
+    fun test(server: ServerProfile, password: PasswordEdit = PasswordEdit.Keep) {
         val editor = mutableState.value.editor ?: return
         if (!server.isValid() || editor.testing || mutableState.value.saving) return
         invalidateNotices()
         val token = noticeToken
-        mutableState.update { it.copy(editor = editor.copy(testing = true, testError = null)) }
+        mutableState.update { it.copy(editor = editor.copy(testing = true, testError = null, passwordSaveFailed = false)) }
         testJob = viewModelScope.launch {
-            val error = if (!networkPermission()) ConnectionError.PERMISSION_REQUIRED else repository.testConnection(server)
+            val error = try {
+                if (!networkPermission()) ConnectionError.PERMISSION_REQUIRED else when (password) {
+                    PasswordEdit.Keep -> repository.testConnection(store.testProfile(server, editor.server))
+                    PasswordEdit.Remove -> repository.testConnection(server.copy(credentialRevision = null))
+                    is PasswordEdit.Replace -> repository.testConnection(server) { password.password }
+                }
+            } catch (failure: CredentialException) {
+                failure.connectionError()
+            }
             if (token == noticeToken && mutableState.value.editor?.token == editor.token) {
                 mutableState.update { it.copy(editor = it.editor?.copy(testing = false, testError = error)) }
                 mutableNotices.tryEmit(UiNotice(token, if (error == null) NoticeMessage.MPD_AVAILABLE else NoticeMessage.MPD_UNAVAILABLE))
@@ -203,9 +215,9 @@ class ServersViewModel(
         }
     }
 
-    fun save(server: ServerProfile) {
+    fun save(server: ServerProfile, password: PasswordEdit = PasswordEdit.Keep) {
         if (!server.isValid() || mutableState.value.editor?.testing == true) return
-        writeSettings(afterSave = server) { store.saveAndSelect(server) }
+        writeSettings(afterSave = server.id) { store.saveAndSelect(server, password) }
     }
 
     fun select(server: ServerProfile) = writeSettings { store.select(server.id) }
@@ -215,7 +227,7 @@ class ServersViewModel(
     fun setTheme(mode: ThemeMode) = writeSettings(invalidate = false) { store.setTheme(mode) }
 
     private fun writeSettings(
-        afterSave: ServerProfile? = null,
+        afterSave: String? = null,
         invalidate: Boolean = true,
         action: suspend () -> Unit,
     ) {
@@ -223,18 +235,29 @@ class ServersViewModel(
         if (invalidate) invalidateNotices()
         val token = noticeToken
         writingSettings = true
-        mutableState.update { it.copy(saving = true, saveFailed = false) }
+        mutableState.update { it.copy(saving = true, saveFailed = false,
+            editor = it.editor?.copy(passwordSaveFailed = false)) }
         viewModelScope.launch {
             try {
                 action()
-                if (refreshWrittenSettings() && afterSave != null) {
+                val saved = if (refreshWrittenSettings() && afterSave != null) {
+                    state.value.settings.servers.find { it.id == afterSave }
+                } else null
+                if (saved != null) {
                     mutableState.update { it.copy(editor = null) }
                     // The observer is suppressed during this atomic write, including same-endpoint edits.
-                    connect(afterSave, notifyToken = token)
+                    connect(saved, notifyToken = token)
                 }
             } catch (_: DuplicateServerNameException) {
                 // Refresh the editor's name validation if another write won the race to save.
                 refreshWrittenSettings()
+            } catch (failure: CredentialException) {
+                mutableState.update { current ->
+                    current.copy(editor = current.editor?.let {
+                        if (failure.failure == CredentialFailure.SAVE) it.copy(passwordSaveFailed = true)
+                        else it.copy(testError = failure.connectionError())
+                    })
+                }
             } catch (_: IOException) {
                 mutableState.update { it.copy(saveFailed = true) }
             } finally {
@@ -317,8 +340,7 @@ class ServersViewModel(
 
     private fun confirmWaitingTimerPlayback() {
         val timer = sleepTimer?.state?.value ?: return
-        val target = timer.settings.record?.target ?: return
-        if (timer.waiting && target.endpoint() == repository.activeServer?.endpoint()) repository.confirmTimerPlayback()
+        if (timer.waiting && timer.settings.record?.matches(repository.activeServer) == true) repository.confirmTimerPlayback()
     }
     fun refreshSleepTimer() { sleepTimer?.retry() }
 
@@ -359,5 +381,5 @@ class ServersViewModel(
         if (sharedRepository == null) repository.close()
     }
 
-    private fun ServerProfile.endpoint() = listOf(id, host, mpdPort.toString(), streamPort.toString())
+    private fun ServerProfile.endpoint() = listOf(id, host, mpdPort.toString(), streamPort.toString(), credentialRevision)
 }

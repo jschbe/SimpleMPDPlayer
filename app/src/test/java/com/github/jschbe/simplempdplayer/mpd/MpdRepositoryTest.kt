@@ -146,7 +146,7 @@ class MpdRepositoryTest {
         runCurrent()
         assertEquals(ConnectionStatus.CONNECTED, repository.state.value.status)
         assertEquals(PlaybackState.PLAYING, repository.state.value.snapshot!!.status.playback)
-        assertEquals(ConnectionError.MPD_REJECTED, repository.state.value.commandError)
+        assertEquals(ConnectionError.MPD_PERMISSION, repository.state.value.commandError)
         assertFalse(repository.state.value.commandPending)
         server.reject = null
         repository.perform(PlayerAction.Stop)

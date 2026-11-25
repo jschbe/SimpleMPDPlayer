@@ -2,6 +2,8 @@ package com.github.jschbe.simplempdplayer.timer
 
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -10,6 +12,7 @@ import com.github.jschbe.simplempdplayer.PlayerApplication
 import com.github.jschbe.simplempdplayer.data.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.withLock
 import android.os.SystemClock
 import com.github.jschbe.simplempdplayer.mpd.*
 import org.junit.After
@@ -66,6 +69,23 @@ class SleepTimerUiTest {
     private fun externalPlayback(state: String, expected: PlaybackState) {
         fixture.playback(state)
         compose.waitUntil(10_000) { app.repository.state.value.snapshot?.status?.playback == expected }
+    }
+
+    @Test fun selectingTheInitialPresetPersistsAnExplicitDefaultWithoutArming() {
+        val previous = runBlocking {
+            profileMutationLock.withLock {
+                app.sleepTimerDataStore.edit { it.remove(intPreferencesKey("minutes")) }
+                app.serverDataStore.edit { it.remove(preferredMinutesKey) }
+            }
+            app.sleepTimer.refresh()
+            assertNull(app.serverDataStore.data.first()[preferredMinutesKey])
+            app.sleepTimer.state.value.settings.record
+        }
+        preset(30)
+        compose.waitUntil(5_000) { runBlocking { app.serverDataStore.data.first()[preferredMinutesKey] } == 30 }
+        assertEquals(previous, app.sleepTimer.state.value.settings.record)
+        assertFalse(AndroidTimerScheduler(app).hasPendingIntent())
+        assertTrue(fixture.mutations.isEmpty())
     }
 
     @Test fun dropdownAndImeDoneApplyValidCustomDurationWithoutEnablingTimer() {
@@ -131,7 +151,7 @@ class SleepTimerUiTest {
         for (mode in ThemeMode.entries) {
             runBlocking { profiles.setTheme(mode) }
             compose.onNodeWithTag("sleep_timer_switch").performScrollTo().assertIsOn()
-            assertEquals(1, runBlocking { SleepTimerStore(app.sleepTimerDataStore).read().minutes })
+            assertEquals(1, runBlocking { SleepTimerStore(app.sleepTimerDataStore, app.serverDataStore).read().minutes })
         }
         compose.onNodeWithTag("sleep_timer_switch").performClick()
         compose.waitUntil { !app.sleepTimer.state.value.enabled }

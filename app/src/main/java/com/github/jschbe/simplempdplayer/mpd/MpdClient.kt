@@ -75,7 +75,7 @@ class MpdClient(
         return exchange {
             socketIo {
                 write(command)
-                readResponse()
+                readResponse(name)
             }
         }
     }
@@ -85,7 +85,7 @@ class MpdClient(
         socketIo {
             socket.soTimeout = 0
             write(MpdProtocol.command("idle", listOf("player", "playlist", "mixer", "options")))
-            readResponse().map { (key, value) ->
+            readResponse("idle").map { (key, value) ->
                 if (key != "changed") throw InvalidMpdResponse()
                 value
             }.toSet()
@@ -98,7 +98,7 @@ class MpdClient(
         output.flush()
     }
 
-    private fun readResponse(): List<Pair<String, String>> {
+    private fun readResponse(expectedCommand: String): List<Pair<String, String>> {
         val fields = mutableListOf<Pair<String, String>>()
         var characters = 0
         while (true) {
@@ -106,7 +106,7 @@ class MpdClient(
             characters += line.length
             when {
                 line == "OK" -> return fields
-                line.startsWith("ACK") -> throw MpdProtocol.parseAck(line)
+                line.startsWith("ACK") -> throw MpdProtocol.parseAck(line, expectedCommand)
                 else -> {
                     val field = MpdProtocol.parseField(line)
                     if (characters > 1_048_576 || fields.size == 10_000) throw MpdResponseLimit()

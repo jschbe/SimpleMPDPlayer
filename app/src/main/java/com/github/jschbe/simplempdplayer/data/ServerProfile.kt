@@ -2,6 +2,7 @@ package com.github.jschbe.simplempdplayer.data
 
 import java.net.IDN
 import java.net.URI
+import java.util.Locale
 import java.util.UUID
 
 data class ServerProfile(
@@ -10,10 +11,20 @@ data class ServerProfile(
     val host: String,
     val mpdPort: Int = 6600,
     val streamPort: Int = 8000,
+    val credentialRevision: String? = null,
 ) {
-    fun isValid(): Boolean = runCatching { UUID.fromString(id).toString() == id }.getOrDefault(false) &&
+    fun isValid(): Boolean = isCanonicalUuid(id) && (credentialRevision == null || isCanonicalUuid(credentialRevision)) &&
         ServerInput(name, host, mpdPort.toString(), streamPort.toString()).errors().isEmpty()
+
+    internal val controlHost: String get() = host.trim().removeSurrounding("[", "]").let {
+        it.substringBefore('%').lowercase(Locale.ROOT) + if ('%' in it) "%" + it.substringAfter('%') else ""
+    }
+
+    fun sameControlEndpoint(other: ServerProfile): Boolean = controlHost == other.controlHost && mpdPort == other.mpdPort
 }
+
+internal fun isCanonicalUuid(value: String): Boolean =
+    runCatching { UUID.fromString(value).toString() == value }.getOrDefault(false)
 
 enum class ProfileField { NAME, HOST, MPD_PORT, STREAM_PORT }
 

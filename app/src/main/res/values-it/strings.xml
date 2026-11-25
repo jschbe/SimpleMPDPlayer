@@ -49,7 +49,7 @@
     <string name="timer_error_network">Impossibile confermare Pausa. Controlla server e rete. Nessun nuovo tentativo automatico.</string>
     <string name="timer_error_timeout">Timeout di Pausa; esecuzione incerta. Nessun nuovo tentativo automatico.</string>
     <string name="timer_error_rejected">MPD ha rifiutato Pausa. Controlla i permessi del server.</string>
-    <string name="timer_error_authentication">MPD richiede autenticazione o autorizzazione per Pausa. Le password non sono supportate.</string>
+    <string name="timer_error_authentication">MPD ha negato l’accesso al timer di spegnimento. Controlla le autorizzazioni sul server e la password del profilo.</string>
     <string name="timer_error_permission">Impossibile inviare Pausa. Controlla il permesso Android per la rete locale.</string>
     <string name="timer_error_protocol">Impossibile verificare la risposta del server. Pausa non è confermata.</string>
     <string name="timer_error_scheduling">Android non è riuscito a registrare il timer o la registrazione è stata interrotta. Riattivalo.</string>
@@ -157,7 +157,7 @@
     <string name="reconnecting">Riconnessione…</string>
     <string name="connection_waiting_network">Rete non disponibile</string>
     <string name="connection_lost">Connessione persa. Controlla server e rete.</string>
-    <string name="mpd_rejected">MPD ha rifiutato il comando. Controlla i permessi del server o la disponibilità del brano selezionato. L’autenticazione con password non è ancora supportata.</string>
+    <string name="mpd_rejected">MPD ha rifiutato il comando. Controlla i permessi del server o la disponibilità del brano selezionato.</string>
     <string name="network_error">Errore di rete. Controlla la connessione e riprova.</string>
     <string name="allow_local_network">Consenti rete locale</string>
     <string name="local_network_permission_required">Per collegarti al server MPD serve l’accesso alla rete locale. Consenti l’accesso oppure abilita « Dispositivi nelle vicinanze » nelle impostazioni dell’app se la richiesta non appare più.</string>
@@ -207,4 +207,19 @@
     <string name="clear_queue_unavailable_message">Impossibile visualizzare la coda. Rimuovere tutti i brani dalla coda MPD attiva?</string>
     <string name="library_listing_limit">La cartella contiene troppi dati per essere visualizzata.</string>
     <string name="mpd_response_limit">Una risposta di MPD ha superato il limite di caricamento.</string>
+    <string name="mpd_password">Password MPD</string>
+    <string name="password_keep">Mantieni la password salvata</string>
+    <string name="password_replace">Sostituisci la password</string>
+    <string name="password_remove">Non usare una password</string>
+    <string name="password_backup_hint">Le password rimangono su questo dispositivo. Inseriscile di nuovo dopo un ripristino.</string>
+    <string name="password_reentry">Inserisci la password per questo host e questa porta MPD o scegli di non usare una password.</string>
+    <string name="password_invalid">Inserisci una password valida, senza interruzioni di riga o caratteri NUL.</string>
+    <string name="password_save_failed">Impossibile salvare la password su questo dispositivo. Riprova.</string>
+    <string name="password_needed_status">Password MPD necessaria</string>
+    <string name="password_rejected_status">Password MPD rifiutata</string>
+    <string name="mpd_access_denied_status">Accesso MPD negato</string>
+    <string name="password_missing_detail">Inserisci di nuovo la password MPD in Modifica server. Su questo dispositivo non è presente.</string>
+    <string name="password_unreadable_detail">Impossibile leggere la password salvata. Inseriscila di nuovo in Modifica server.</string>
+    <string name="password_rejected_detail">MPD ha rifiutato la password. Controllala in Modifica server.</string>
+    <string name="mpd_access_denied_detail">MPD ha negato questo comando. Controlla le autorizzazioni sul server e la password del profilo.</string>
 </resources>

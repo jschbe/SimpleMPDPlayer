@@ -48,7 +48,7 @@
     <string name="timer_error_network">Pause konnte nicht bestätigt werden. Prüfe Server und Netzwerk. Kein automatischer Neuversuch.</string>
     <string name="timer_error_timeout">Zeitüberschreitung bei Pause; Zustellung ungewiss. Kein automatischer Neuversuch.</string>
     <string name="timer_error_rejected">MPD hat Pause abgelehnt. Prüfe die Serverberechtigungen.</string>
-    <string name="timer_error_authentication">MPD verlangt für Pause eine Anmeldung oder Berechtigung. Passwörter werden nicht unterstützt.</string>
+    <string name="timer_error_authentication">MPD hat den Zugriff für den Schlaftimer verweigert. Prüfe die Serverberechtigungen und das Passwort des Profils.</string>
     <string name="timer_error_permission">Pause konnte nicht gesendet werden. Prüfe die Android-Berechtigung für das lokale Netzwerk.</string>
     <string name="timer_error_protocol">Die Serverantwort konnte nicht geprüft werden. Pause ist nicht bestätigt.</string>
     <string name="timer_error_scheduling">Android konnte den Timer nicht registrieren oder die Registrierung wurde unterbrochen. Aktiviere ihn erneut.</string>
@@ -156,7 +156,7 @@
     <string name="reconnecting">Verbindung wird wiederhergestellt…</string>
     <string name="connection_waiting_network">Netzwerk nicht verfügbar</string>
     <string name="connection_lost">Verbindung verloren. Prüfe Server und Netzwerk.</string>
-    <string name="mpd_rejected">MPD hat den Befehl abgelehnt. Prüfe Serverberechtigungen oder ob der ausgewählte Titel noch verfügbar ist. Passwortanmeldung wird noch nicht unterstützt.</string>
+    <string name="mpd_rejected">MPD hat den Befehl abgelehnt. Prüfe Serverberechtigungen oder ob der ausgewählte Titel noch verfügbar ist.</string>
     <string name="network_error">Netzwerkfehler. Prüfe deine Verbindung und versuche es erneut.</string>
     <string name="allow_local_network">Lokales Netzwerk erlauben</string>
     <string name="local_network_permission_required">Für die Verbindung zum MPD-Server ist der Zugriff auf das lokale Netzwerk erforderlich. Erlaube den Zugriff oder aktiviere „Geräte in der Nähe“ in den App-Einstellungen, falls die Berechtigungsabfrage nicht mehr erscheint.</string>
@@ -206,4 +206,19 @@
     <string name="clear_queue_unavailable_message">Die Warteschlange konnte nicht angezeigt werden. Alle Titel aus der aktiven MPD-Warteschlange entfernen?</string>
     <string name="library_listing_limit">Dieser Ordner enthält zu viele Daten für die Anzeige.</string>
     <string name="mpd_response_limit">Eine MPD-Antwort hat das Ladelimit überschritten.</string>
+    <string name="mpd_password">MPD-Passwort</string>
+    <string name="password_keep">Gespeichertes Passwort behalten</string>
+    <string name="password_replace">Passwort ersetzen</string>
+    <string name="password_remove">Kein Passwort verwenden</string>
+    <string name="password_backup_hint">Passwörter bleiben auf diesem Gerät. Gib sie nach einer Wiederherstellung erneut ein.</string>
+    <string name="password_reentry">Gib das Passwort für diesen MPD-Host und -Port ein oder wähle «Kein Passwort verwenden».</string>
+    <string name="password_invalid">Gib ein gültiges Passwort ohne Zeilenumbrüche oder NUL-Zeichen ein.</string>
+    <string name="password_save_failed">Das Passwort konnte auf diesem Gerät nicht gespeichert werden. Versuche es erneut.</string>
+    <string name="password_needed_status">MPD-Passwort erforderlich</string>
+    <string name="password_rejected_status">MPD-Passwort abgelehnt</string>
+    <string name="mpd_access_denied_status">MPD-Zugriff verweigert</string>
+    <string name="password_missing_detail">Gib das MPD-Passwort unter «Server bearbeiten» erneut ein. Es fehlt auf diesem Gerät.</string>
+    <string name="password_unreadable_detail">Das gespeicherte Passwort kann nicht gelesen werden. Gib es unter «Server bearbeiten» erneut ein.</string>
+    <string name="password_rejected_detail">MPD hat das Passwort abgelehnt. Prüfe es unter «Server bearbeiten».</string>
+    <string name="mpd_access_denied_detail">MPD hat den Befehl verweigert. Prüfe die Serverberechtigungen und das Passwort des Profils.</string>
 </resources>

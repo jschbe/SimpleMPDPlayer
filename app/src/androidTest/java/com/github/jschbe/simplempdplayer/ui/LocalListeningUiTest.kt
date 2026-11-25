@@ -32,7 +32,7 @@ class LocalListeningUiTest {
         }
         compose.setContent {
             SimpleMPDPlayerTheme {
-                ServersApp(state.value, {}, {}, {}, {}, {}, {}, { reconnects++ }, {}, { permissionRequests++ }, commands::add,
+                ServersApp(state.value, {}, {}, {}, { _, _ -> }, {}, {}, { reconnects++ }, {}, { permissionRequests++ }, commands::add,
                     onLocalListening = listening::add)
             }
         }

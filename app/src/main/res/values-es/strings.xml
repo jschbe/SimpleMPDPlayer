@@ -49,7 +49,7 @@
     <string name="timer_error_network">No se pudo confirmar Pausa. Comprueba el servidor y la red. No habrá reintento automático.</string>
     <string name="timer_error_timeout">Se agotó el tiempo de espera de Pausa; la ejecución es incierta. No habrá reintento automático.</string>
     <string name="timer_error_rejected">MPD rechazó Pausa. Comprueba los permisos del servidor.</string>
-    <string name="timer_error_authentication">MPD requiere autenticación o permiso para Pausa. No se admiten contraseñas.</string>
+    <string name="timer_error_authentication">MPD denegó el acceso al temporizador de apagado. Comprueba los permisos del servidor y la contraseña del perfil.</string>
     <string name="timer_error_permission">No se pudo enviar Pausa. Comprueba el permiso de Android para la red local.</string>
     <string name="timer_error_protocol">No se pudo validar la respuesta del servidor. Pausa no está confirmada.</string>
     <string name="timer_error_scheduling">Android no pudo registrar el temporizador o se interrumpió el registro. Actívalo de nuevo.</string>
@@ -157,7 +157,7 @@
     <string name="reconnecting">Reconectando…</string>
     <string name="connection_waiting_network">Red no disponible</string>
     <string name="connection_lost">Conexión perdida. Comprueba el servidor y la red.</string>
-    <string name="mpd_rejected">MPD rechazó el comando. Comprueba los permisos del servidor o si la pista seleccionada sigue disponible. Aún no se admite autenticación con contraseña.</string>
+    <string name="mpd_rejected">MPD rechazó el comando. Comprueba los permisos del servidor o si la pista seleccionada sigue disponible.</string>
     <string name="network_error">Error de red. Comprueba la conexión y vuelve a intentarlo.</string>
     <string name="allow_local_network">Permitir red local</string>
     <string name="local_network_permission_required">Se necesita acceso a la red local para conectar con el servidor MPD. Permítelo o activa « Dispositivos cercanos » en los ajustes de la aplicación si ya no aparece el aviso.</string>
@@ -207,4 +207,19 @@
     <string name="clear_queue_unavailable_message">No se pudo mostrar la cola. ¿Quitar todas las pistas de la cola activa de MPD?</string>
     <string name="library_listing_limit">Esta carpeta contiene demasiados datos para mostrarlos.</string>
     <string name="mpd_response_limit">Una respuesta de MPD superó el límite de carga.</string>
+    <string name="mpd_password">Contraseña de MPD</string>
+    <string name="password_keep">Conservar la contraseña guardada</string>
+    <string name="password_replace">Cambiar la contraseña</string>
+    <string name="password_remove">No usar contraseña</string>
+    <string name="password_backup_hint">Las contraseñas se guardan en este dispositivo. Vuelve a introducirlas tras una restauración.</string>
+    <string name="password_reentry">Introduce la contraseña para este host y puerto de MPD o elige no usar contraseña.</string>
+    <string name="password_invalid">Introduce una contraseña válida, sin saltos de línea ni caracteres NUL.</string>
+    <string name="password_save_failed">No se pudo guardar la contraseña en este dispositivo. Inténtalo de nuevo.</string>
+    <string name="password_needed_status">Se requiere la contraseña de MPD</string>
+    <string name="password_rejected_status">Contraseña de MPD rechazada</string>
+    <string name="mpd_access_denied_status">Acceso a MPD denegado</string>
+    <string name="password_missing_detail">Vuelve a introducir la contraseña de MPD en Editar servidor. No está en este dispositivo.</string>
+    <string name="password_unreadable_detail">No se puede leer la contraseña guardada. Vuelve a introducirla en Editar servidor.</string>
+    <string name="password_rejected_detail">MPD rechazó la contraseña. Compruébala en Editar servidor.</string>
+    <string name="mpd_access_denied_detail">MPD denegó este comando. Comprueba los permisos del servidor y la contraseña del perfil.</string>
 </resources>

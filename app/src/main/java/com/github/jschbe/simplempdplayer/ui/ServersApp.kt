@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.github.jschbe.simplempdplayer.R
 import com.github.jschbe.simplempdplayer.ServersUiState
+import com.github.jschbe.simplempdplayer.data.PasswordEdit
 import com.github.jschbe.simplempdplayer.data.ServerProfile
 import com.github.jschbe.simplempdplayer.data.ThemeMode
 import com.github.jschbe.simplempdplayer.mpd.ConnectionError
@@ -35,14 +36,14 @@ fun ServersApp(
     onAdd: () -> Unit,
     onEdit: (ServerProfile) -> Unit,
     onDismissEditor: () -> Unit,
-    onSave: (ServerProfile) -> Unit,
+    onSave: (ServerProfile, PasswordEdit) -> Unit,
     onDelete: (ServerProfile) -> Unit,
     onSelect: (ServerProfile) -> Unit,
     onReconnect: () -> Unit,
     onReload: () -> Unit,
     onGrantNetworkAccess: () -> Unit,
     onAction: (PlayerAction) -> Unit,
-    onTest: (ServerProfile) -> Unit = {},
+    onTest: (ServerProfile, PasswordEdit) -> Unit = { _, _ -> },
     onReorder: (List<String>) -> Unit = {},
     onTheme: (ThemeMode) -> Unit = {},
     onLoadBrowser: () -> Unit = {},
@@ -140,7 +141,8 @@ fun ServersApp(
                     scope.launch { pager.scrollToPage(1) }
                 }, onReload, onReorder)
             } else {
-                ConnectionStatusRow(state.connection, state.activeServer != null, onReconnect, onGrantNetworkAccess)
+                ConnectionStatusRow(state.connection, state.activeServer != null, onReconnect, onGrantNetworkAccess,
+                    onEditServer = state.activeServer?.takeIf { state.settingsEditable }?.let { server -> { onEdit(server) } })
                 if (state.settings.readFailed && state.activeServer == null) {
                     Column(Modifier.padding(horizontal = 16.dp)) { SettingsReadError(state.loading, onReload) }
                 }
@@ -214,13 +216,16 @@ internal fun ConnectionStatusRow(
     hasServer: Boolean,
     onReconnect: () -> Unit,
     onGrantNetworkAccess: () -> Unit,
+    onEditServer: (() -> Unit)? = null,
 ) {
     val permissionRequired = connection.error == ConnectionError.PERMISSION_REQUIRED
     val busy = !permissionRequired && !connection.retriesExhausted &&
         (connection.recovering || connection.status == ConnectionStatus.CONNECTING)
     val failed = permissionRequired || connection.retriesExhausted || (!busy &&
         (connection.status == ConnectionStatus.FAILED || connection.error != null))
+    val accessLabel = connection.error?.accessStatusLabel()
     val label = when {
+        accessLabel != null && failed -> accessLabel
         failed -> R.string.connection_failed
         connection.waitingForNetwork -> R.string.connection_waiting_network
         connection.recovering -> R.string.reconnecting
@@ -238,8 +243,13 @@ internal fun ConnectionStatusRow(
             })
         if (permissionRequired || (failed && hasServer)) {
             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                TextButton(onClick = if (permissionRequired) onGrantNetworkAccess else onReconnect) {
-                    Text(stringResource(if (permissionRequired) R.string.allow_local_network else R.string.reconnect))
+                val edit = onEditServer?.takeIf { accessLabel != null }
+                TextButton(onClick = if (permissionRequired) onGrantNetworkAccess else edit ?: onReconnect) {
+                    Text(stringResource(when {
+                        permissionRequired -> R.string.allow_local_network
+                        edit != null -> R.string.edit_server
+                        else -> R.string.reconnect
+                    }))
                 }
             }
         } else if (busy) {

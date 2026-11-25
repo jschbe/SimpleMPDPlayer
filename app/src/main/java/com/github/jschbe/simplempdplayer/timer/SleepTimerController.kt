@@ -80,8 +80,9 @@ class SleepTimerController(
         val waiting = saved.record?.takeIf { it.status == TimerStatus.WAITING }
         if (waiting != null) {
             scheduler.cancel()
-            if (isPlaying(waiting.target)) {
-                startCountdown(saved, waiting.target, servers)
+            val current = servers.servers.first { it.id == waiting.target.id }
+            if (isPlaying(current)) {
+                startCountdown(saved, waiting.target.copy(credentialRevision = current.credentialRevision), servers)
                 return@operation
             }
         }
@@ -108,12 +109,18 @@ class SleepTimerController(
         operation {
             val saved = showFailedDelivery(store.read())
             val servers = profiles.first().also { if (it.readFailed) throw IOException() }
-            if (saved.minutes == minutes) { publish(saved, servers); return@operation }
+            if (saved.minutes == minutes) {
+                store.confirmMinutes(minutes)
+                publish(saved, servers)
+                return@operation
+            }
             val changed = saved.copy(minutes = minutes)
             val old = saved.record
-            if (old != null && old.status in setOf(TimerStatus.WAITING, TimerStatus.ACTIVE) && old.matches(servers.servers.find { it.id == old.target.id })) {
+            val current = servers.servers.find { it.id == old?.target?.id }
+            if (old != null && old.status in setOf(TimerStatus.WAITING, TimerStatus.ACTIVE) &&
+                current != null && old.matches(current)) {
                 // Changing duration keeps the originally bound server, even after selecting another.
-                arm(changed, old.target, servers)
+                arm(changed, old.target.copy(credentialRevision = current.credentialRevision), servers)
             } else {
                 store.write(changed)
                 publish(changed, servers)
@@ -130,6 +137,7 @@ class SleepTimerController(
         val current = playback() ?: return false
         return current.server.id == target.id && current.server.host == target.host &&
             current.server.mpdPort == target.mpdPort && current.server.streamPort == target.streamPort &&
+            current.server.credentialRevision == target.credentialRevision &&
             current.connection.hasConfirmedPlayerStatus(clock.elapsed()) &&
             current.connection.snapshot?.status?.playback == PlaybackState.PLAYING
     }
@@ -140,7 +148,8 @@ class SleepTimerController(
         } else {
             val boot = clock.boot()
             if (boot == null) { mutableState.update { it.copy(operationError = TimerError.CLOCK) }; return }
-            val record = TimerRecord(UUID.randomUUID().toString(), target, boot, clock.elapsed(), null, TimerStatus.WAITING)
+            val record = TimerRecord(UUID.randomUUID().toString(), target.copy(credentialRevision = null),
+                boot, clock.elapsed(), null, TimerStatus.WAITING)
             val waiting = saved.copy(record = record, recovered = false)
             store.write(waiting)
             scheduler.cancel()
@@ -152,7 +161,7 @@ class SleepTimerController(
         val boot = clock.boot()
         if (boot == null) { mutableState.update { it.copy(operationError = TimerError.CLOCK) }; return }
         val now = clock.elapsed()
-        val record = TimerRecord(UUID.randomUUID().toString(), target, boot, now,
+        val record = TimerRecord(UUID.randomUUID().toString(), target.copy(credentialRevision = null), boot, now,
             now + saved.minutes * 60_000L, TimerStatus.ARMING)
         val arming = saved.copy(record = record, recovered = false)
         // A crash between persistence and OS registration is detectable, never silently re-armed.
@@ -217,10 +226,11 @@ class SleepTimerController(
         val record = saved.record ?: return@tryOperation
         if (record.token != token || record.status != TimerStatus.ACTIVE || knownDeliveryFailure(record)) return@tryOperation
         val servers = profiles.first().also { if (it.readFailed) throw IOException() }
+        val target = servers.servers.find { it.id == record.target.id }
         val invalid = when {
             clock.boot() == null -> record.copy(status = TimerStatus.FAILED, error = TimerError.CLOCK)
             clock.boot() != record.boot || clock.elapsed() < record.started -> record.copy(status = TimerStatus.REBOOTED)
-            !record.matches(servers.servers.find { it.id == record.target.id }) -> record.copy(status = TimerStatus.PROFILE_CHANGED)
+            !record.matches(target) -> record.copy(status = TimerStatus.PROFILE_CHANGED)
             else -> null
         }
         if (invalid != null) {
@@ -235,7 +245,7 @@ class SleepTimerController(
             store.write(saved)
             publish(saved, servers)
             scheduler.cancel()
-            val error = pause(record.target)
+            val error = pause(record.target.copy(credentialRevision = requireNotNull(target).credentialRevision))
             saved = saved.copy(record = record.copy(
                 status = if (error == null) TimerStatus.COMPLETED else TimerStatus.FAILED, error = error))
             store.write(saved)

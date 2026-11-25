@@ -103,7 +103,7 @@ internal fun SleepTimerDialog(
                         sleepTimerPresets.forEach { preset ->
                             DropdownMenuItem(text = { Text(pluralStringResource(R.plurals.timer_duration_minutes, preset, preset)) },
                                 onClick = {
-                                    if (editable && (preset == state.settings.minutes || onMinutes(preset))) {
+                                    if (editable && onMinutes(preset)) {
                                         customMode = false
                                         draft = null
                                         expanded = false
@@ -190,6 +190,10 @@ private fun timerErrorText(error: TimerError): Int = when (error) {
     TimerError.TIMEOUT -> R.string.timer_error_timeout
     TimerError.REJECTED -> R.string.timer_error_rejected
     TimerError.AUTHENTICATION -> R.string.timer_error_authentication
+    TimerError.PASSWORD_REJECTED -> R.string.password_rejected_detail
+    TimerError.CREDENTIAL_MISSING -> R.string.password_missing_detail
+    TimerError.CREDENTIAL_UNREADABLE -> R.string.password_unreadable_detail
+    TimerError.MPD_PERMISSION -> R.string.mpd_access_denied_detail
     TimerError.PERMISSION -> R.string.timer_error_permission
     TimerError.PROTOCOL -> R.string.timer_error_protocol
     TimerError.SCHEDULING -> R.string.timer_error_scheduling

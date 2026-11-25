@@ -1,16 +1,15 @@
-# Localization — M7.2
+# Localization
 
 ## Implemented status
 
-M7.2 adds seven supported app languages: en/de/fr/it/es/uk/ru, with complete
-unqualified English fallback and the six supplied translations. There are now
-**203 strings and one plural name (204 names / 205 English CSV rows)**.
+The app supports en/de/fr/it/es/uk/ru, with complete unqualified English
+fallback and six translations. There are now
+**215 strings and one plural name (216 names / 217 English CSV rows)**.
 `strings-en.csv` remains the canonical English review catalog. The 19 language,
 About and legal-navigation strings and the six queue and response-limit strings
 include review context. The six queue and limit strings are available in all
 seven languages and introduce no format arguments or plural branches. The
-earlier context line references below record the M7.1 audit snapshot. Original English/source wording and existing translation wording
-were retained.
+earlier context line references below record the M7.1 audit snapshot. R09 adds the masked password editor, its keep/replace/remove actions, concise status and detailed credential/permission feedback, and re-entry guidance in all seven languages. It replaces the obsolete unsupported-password messages.
 
 Settings → Language offers System default plus native language names. It uses
 AppCompat/platform per-app locales (AndroidX auto-storage below API 33; Android
@@ -42,10 +41,9 @@ About supplies localized navigation to the build version, GPL-3.0-or-later,
 complete offline GPL and third-party notices, and selectable public source URL.
 Original legal texts are preserved in English. See [license audit](LICENSING.md).
 
-Automated coverage is described in the M7.2 verification section of
-[architecture](ARCHITECTURE.md): JVM XML/CSV/type/argument checks, actual Android
-language selection/restoration/external changes, plural rules, About/legal text,
-large-font translated screens and retained live-fixture media/timer state.
+See [localization verification](VERIFICATION.md#m72-localization-and-licensing)
+for XML/CSV/type/argument checks, Android language selection and restoration,
+plural rules, offline legal text, large-font layouts and retained media/timer state.
 
 ## Historical M7.1 inventory
 
@@ -55,7 +53,7 @@ that historical snapshot; the implemented status above supersedes them.
 
 Status: source audit on 2026-11-22. This milestone adds documentation and an English review export only. It does not add translations, change resources or layout, select a language, or change MPD, Media3, timer or persistence behavior. English remains the app's existing unqualified fallback. This inventory does not establish Google Play publication readiness or supply store-listing copy.
 
-## Scope and canonical source
+### Scope and canonical source
 
 The shipping source/resource audit covers all 29 Kotlin files under `app/src/main`, all 26 Android XML files including the manifest, the 12 raster launcher resources and the remaining application configuration. The vector/adaptive/raster artwork contains no embedded English labels. All 34 Kotlin test files and the two Android-test assets were also scanned; fixture names, assertions, test-only screens and generated MPD responses are not shipping copy. There are 104 files under `app/src` in this snapshot. Build outputs, generated resource symbols and third-party source are not additional app-authored strings.
 
@@ -66,7 +64,7 @@ The canonical editable English source is [`app/src/main/res/values/strings.xml`]
 ### CSV conventions
 
 - Encoding is strict UTF-8 without a BOM, with LF line endings and a final newline. Use an explicit UTF-8 CSV import in spreadsheet software.
-- Commas delimit columns. Embedded commas and quotation marks are escaped by standard CSV double quoting; quoted cells must be read with a CSV parser, not split on commas. The current file has 180 physical lines including its header and no embedded cell newlines.
+- Commas delimit columns. Embedded commas and quotation marks are escaped by standard CSV double quoting; quoted cells must be read with a CSV parser, not split on commas. The M7.1 snapshot had 180 physical lines including its header and no embedded cell newlines.
 - Ordinary keys are the exact Android resource names. `timer_duration_minutes[one]` and `timer_duration_minutes[other]` identify quantity branches of `R.plurals.timer_duration_minutes`; bracketed keys are review identifiers, not new Android resource names. Translation work may later require additional quantity branches.
 - `english` contains the unformatted, displayed English template. It retains `%1$s`, `%1$d`, `%2$d` and `%2$02d` exactly, but decodes XML entities and Android literal escaping. It is not a paste-ready XML serialization.
 - Specifically, `metadata_separator` is a comma followed by one ASCII space, with no quotation marks in the value. `delete_server_confirmation` displays quotation marks around `%1$s`, without the XML backslashes. Preserve separator whitespace during review/import.
@@ -333,7 +331,7 @@ The quantity selector suffixes below are export notation. Placeholder types and 
 | `timer_error_network` | `Pause could not be confirmed. Check the server and network. No automatic retry.` | Remote Pause unconfirmed after a network/server failure; preserve uncertainty and no-retry statement. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
 | `timer_error_timeout` | `Pause timed out; delivery may be uncertain. No automatic retry.` | Remote Pause acknowledgement timed out; the server may already have acted; no automatic retry. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
 | `timer_error_rejected` | `MPD rejected Pause. Check server permissions.` | MPD explicitly rejected Pause; server permissions may be responsible. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
-| `timer_error_authentication` | `MPD requires authentication or permission for Pause. Passwords are not supported.` | MPD authentication/permission rejection; this app has no password support. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
+| `timer_error_authentication` | `MPD denied access for the sleep timer. Check the server permissions and the profile password.` | Legacy timer access denial with unknown MPD error category. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
 | `timer_error_permission` | `Pause could not be delivered. Check Android local network permission.` | Android local-network permission blocked the Pause attempt; not an MPD password problem. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
 | `timer_error_protocol` | `The server response could not be validated. Pause is unconfirmed.` | Pause unconfirmed because the MPD response was invalid; never expose the raw response. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
 | `timer_error_scheduling` | `Android could not register the timer, or registration was interrupted. Enable it to try again.` | Android alarm registration failed or was interrupted; re-enabling is a new attempt. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
@@ -428,10 +426,10 @@ The quantity selector suffixes below are export notation. Placeholder types and 
 | `theme_dark` | `Dark` | Dark visual theme option. | None; no quantity-dependent wording. | Compact button, menu, tab or label; no fixed character limit; review width and large text. |
 | `done` | `Done` | Shared dialog button: close Appearance/listening info; apply valid custom timer duration and close its dialog without enabling Off. | None; no quantity-dependent wording. | Compact button, menu, tab or label; no fixed character limit; review width and large text. |
 | `host_placeholder` | `192.168.1.100` | Illustrative existing private IPv4 address in the Host placeholder. Keep ASCII literal; not a real saved server or a default connection. | None; no quantity-dependent wording. | Full-width single-line input or dropdown; keep label/placeholder concise. No fixed character limit. |
-| `test_connection` | `Test` | Profile editor button: test MPD greeting/ping without saving or changing active control. | None; no quantity-dependent wording. | Compact button, menu, tab or label; no fixed character limit; review width and large text. |
+| `test_connection` | `Test` | Profile editor button: test MPD greeting, optional authentication and status without saving or changing active control. | None; no quantity-dependent wording. | Compact button, menu, tab or label; no fixed character limit; review width and large text. |
 | `testing` | `Testing…` | Independent MPD connection probe in progress. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
-| `mpd_available` | `MPD available` | Short toast: MPD greeting/ping succeeded; does not confirm HTTP audio availability. | None; no quantity-dependent wording. | Shared header/short-toast text; OS controls toast display and truncation. No fixed character limit. |
-| `mpd_unavailable` | `MPD unavailable` | Short toast: MPD greeting/ping failed; detailed sanitized inline error is separate. | None; no quantity-dependent wording. | Shared header/short-toast text; OS controls toast display and truncation. No fixed character limit. |
+| `mpd_available` | `MPD available` | Short toast: MPD read-only status probe succeeded; does not confirm HTTP audio availability. | None; no quantity-dependent wording. | Shared header/short-toast text; OS controls toast display and truncation. No fixed character limit. |
+| `mpd_unavailable` | `MPD unavailable` | Short toast: MPD read-only status probe failed; detailed sanitized inline error is separate. | None; no quantity-dependent wording. | Shared header/short-toast text; OS controls toast display and truncation. No fixed character limit. |
 | `connected` | `Connected` | Confirmed MPD connection success, used in header and short toast. | None; no quantity-dependent wording. | Shared header/short-toast text; OS controls toast display and truncation. No fixed character limit. |
 | `connection_failed` | `Connection failed` | MPD connection failure, used in header and short toast. | None; no quantity-dependent wording. | Shared header/short-toast text; OS controls toast display and truncation. No fixed character limit. |
 | `connection_refused` | `Connection refused. Check the MPD port and server configuration.` | MPD control connection refused; check command port/server configuration, not HTTP stream port. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
@@ -441,7 +439,7 @@ The quantity selector suffixes below are export notation. Placeholder types and 
 | `reconnecting` | `Reconnecting…` | Compact connection status during automatic repair and backoff. | None. | Wrapping status label. |
 | `connection_waiting_network` | `Network unavailable` | Android reports no available network; automatic attempts are paused. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
 | `connection_lost` | `Connection lost. Check the server and network.` | MPD control transport was lost; distinct from local HTTP-only failure. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
-| `mpd_rejected` | `MPD rejected the command. Check server permissions or whether the selected track is still available. Password authentication is not supported yet.` | Sanitized MPD ACK rejection; permissions or a stale selected track may explain it. Password support is absent. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
+| `mpd_rejected` | `MPD rejected the command. Check server permissions or whether the selected track is still available.` | Sanitized MPD ACK rejection; permissions or a stale selected track may explain it. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
 | `network_error` | `Network error. Check your connection and try again.` | Generic MPD networking error, displayed through ConnectionError mapping. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |
 | `allow_local_network` | `Allow local network` | App button requesting Android LAN permission; OS permission-dialog wording is owned by Android. | None; no quantity-dependent wording. | Compact button, menu, tab or label; no fixed character limit; review width and large text. |
 | `local_network_permission_required` | `Local network access is required to connect to your MPD server. Allow access, or enable Nearby devices in app settings if the permission prompt no longer appears.` | App explanation of Android LAN access and possible Nearby devices settings. Match official OS terms in later translations. | None; no quantity-dependent wording. | Wrapping text; no fixed character limit. |

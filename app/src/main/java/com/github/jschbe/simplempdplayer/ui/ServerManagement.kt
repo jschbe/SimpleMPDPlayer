@@ -9,7 +9,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.TextObfuscationMode
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,6 +26,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.editableText
+import androidx.compose.ui.semantics.inputText
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -30,9 +39,11 @@ import com.github.jschbe.simplempdplayer.R
 import com.github.jschbe.simplempdplayer.ServerEditor
 import com.github.jschbe.simplempdplayer.ServersUiState
 import com.github.jschbe.simplempdplayer.data.ProfileField
+import com.github.jschbe.simplempdplayer.data.PasswordEdit
 import com.github.jschbe.simplempdplayer.data.ServerInput
 import com.github.jschbe.simplempdplayer.data.ServerProfile
 import com.github.jschbe.simplempdplayer.data.hasDuplicateName
+import com.github.jschbe.simplempdplayer.data.validMpdPassword
 import com.github.jschbe.simplempdplayer.mpd.ConnectionError
 import com.github.jschbe.simplempdplayer.mpd.ConnectionStatus
 import kotlinx.coroutines.delay
@@ -145,8 +156,8 @@ internal fun ServerEditorDialog(
     editor: ServerEditor,
     state: ServersUiState,
     onDismiss: () -> Unit,
-    onSave: (ServerProfile) -> Unit,
-    onTest: (ServerProfile) -> Unit,
+    onSave: (ServerProfile, PasswordEdit) -> Unit,
+    onTest: (ServerProfile, PasswordEdit) -> Unit,
     onReload: () -> Unit,
 ) {
     val server = editor.server
@@ -162,6 +173,29 @@ internal fun ServerEditorDialog(
     val errors = if (submitted) inputErrors else emptySet()
     val duplicateName = state.settings.servers.hasDuplicateName(name, server?.id)
     val invalidName = ProfileField.NAME in inputErrors || duplicateName
+    val hasPassword = server?.credentialRevision != null
+    var choice by remember { mutableStateOf(if (hasPassword) PasswordChoice.KEEP else PasswordChoice.REPLACE) }
+    val draft = remember(choice) { TextFieldState() }
+    val missingReplacement = hasPassword && choice == PasswordChoice.REPLACE && draft.text.isEmpty()
+    val invalidDraft = draft.text.isNotEmpty() && !validMpdPassword(draft.text)
+    val needsReentry = server != null && hasPassword && choice == PasswordChoice.KEEP &&
+        input.toProfile(server.id)?.sameControlEndpoint(server) == false
+    val passwordError = when {
+        needsReentry -> R.string.password_reentry
+        invalidDraft || (submitted && missingReplacement) -> R.string.password_invalid
+        else -> null
+    }
+    fun submit(action: (ServerProfile, PasswordEdit) -> Unit) {
+        submitted = true
+        val candidate = (if (server == null) input.toProfile() else input.toProfile(server.id)) ?: return
+        if (needsReentry || missingReplacement || invalidDraft) return
+        val edit = when (choice) {
+            PasswordChoice.KEEP -> PasswordEdit.Keep
+            PasswordChoice.REMOVE -> PasswordEdit.Remove
+            PasswordChoice.REPLACE -> if (draft.text.isEmpty()) PasswordEdit.Keep else PasswordEdit.Replace(draft.text.toString())
+        }
+        action(candidate, edit)
+    }
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
         title = { Text(stringResource(if (server == null) R.string.add_server else R.string.edit_server)) },
@@ -173,9 +207,45 @@ internal fun ServerEditorDialog(
                 ProfileTextField(host, { host = it }, R.string.server_host, ProfileField.HOST in errors, R.string.invalid_host, !busy, placeholder = R.string.host_placeholder)
                 ProfileTextField(mpdPort, { mpdPort = it }, R.string.mpd_port, ProfileField.MPD_PORT in errors, R.string.invalid_port, !busy, true)
                 ProfileTextField(streamPort, { streamPort = it }, R.string.http_stream_port, ProfileField.STREAM_PORT in errors, R.string.invalid_port, !busy, true)
+                if (hasPassword) {
+                    Column(Modifier.selectableGroup()) {
+                        PasswordChoice.entries.forEach { option ->
+                            Row(
+                                Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                    .testTag("password_${option.name.lowercase()}")
+                                    .selectable(choice == option, enabled = !busy, role = Role.RadioButton) { choice = option },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                RadioButton(selected = choice == option, onClick = null, enabled = !busy)
+                                Text(stringResource(option.label))
+                            }
+                        }
+                    }
+                }
+                if (choice == PasswordChoice.REPLACE) {
+                    OutlinedSecureTextField(
+                        state = draft,
+                        modifier = Modifier.fillMaxWidth().testTag("mpd_password").semantics {
+                            // Compose's editable and input semantics otherwise retain the raw draft.
+                            val masked = AnnotatedString("•".repeat(draft.text.length))
+                            editableText = masked
+                            inputText = masked
+                        },
+                        enabled = !busy,
+                        label = { Text(stringResource(R.string.mpd_password)) },
+                        textObfuscationMode = TextObfuscationMode.Hidden,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                        isError = passwordError != null,
+                    )
+                }
+                passwordError?.let { ErrorText(it) }
+                Text(stringResource(R.string.password_backup_hint), style = MaterialTheme.typography.bodySmall)
                 if (state.settings.readFailed) SettingsReadError(state.loading, onReload)
                 if (state.saveFailed) ErrorText(R.string.settings_save_failed)
-                editor.testError?.let { ErrorText(it.label()) }
+                if (editor.passwordSaveFailed) ErrorText(R.string.password_save_failed)
+                val activeError = state.connection.error.takeIf { server != null && server.id == state.activeServer?.id }
+                (editor.testError ?: activeError?.takeIf { it.accessStatusLabel() != null })?.let { ErrorText(it.label()) }
                 if (editor.testing) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CircularProgressIndicator(Modifier.size(20.dp))
@@ -185,21 +255,24 @@ internal fun ServerEditorDialog(
             }
         },
         confirmButton = {
-            Row {
-                TextButton(onClick = {
-                    submitted = true
-                    val profile = if (server == null) input.toProfile() else input.toProfile(server.id)
-                    profile?.let(onTest)
-                }, enabled = !busy) { Text(stringResource(R.string.test_connection)) }
-                TextButton(onClick = {
-                    submitted = true
-                    val profile = if (server == null) input.toProfile() else input.toProfile(server.id)
-                    if (!invalidName) profile?.let(onSave)
-                }, enabled = state.settingsEditable && !busy && !invalidName) { Text(stringResource(R.string.save)) }
+            FlowRow {
+                TextButton(onClick = { submit(onTest) }, enabled = !busy && !needsReentry && !invalidDraft) {
+                    Text(stringResource(R.string.test_connection))
+                }
+                TextButton(onClick = { submit(onSave) },
+                    enabled = state.settingsEditable && !busy && !invalidName && !needsReentry && !invalidDraft) {
+                    Text(stringResource(R.string.save))
+                }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text(stringResource(R.string.cancel)) } },
     )
+}
+
+private enum class PasswordChoice(@StringRes val label: Int) {
+    KEEP(R.string.password_keep),
+    REPLACE(R.string.password_replace),
+    REMOVE(R.string.password_remove),
 }
 
 @Composable
@@ -258,4 +331,18 @@ internal fun ConnectionError.label(): Int = when (this) {
     ConnectionError.MPD_REJECTED -> R.string.mpd_rejected
     ConnectionError.NETWORK -> R.string.network_error
     ConnectionError.PERMISSION_REQUIRED -> R.string.local_network_permission_required
+    ConnectionError.PASSWORD_REJECTED -> R.string.password_rejected_detail
+    ConnectionError.MPD_PERMISSION -> R.string.mpd_access_denied_detail
+    ConnectionError.CREDENTIAL_MISSING -> R.string.password_missing_detail
+    ConnectionError.CREDENTIAL_UNREADABLE -> R.string.password_unreadable_detail
+    ConnectionError.PASSWORD_REENTRY -> R.string.password_reentry
+    ConnectionError.INVALID_PASSWORD -> R.string.password_invalid
+}
+
+@StringRes
+internal fun ConnectionError.accessStatusLabel(): Int? = when (this) {
+    ConnectionError.CREDENTIAL_MISSING, ConnectionError.CREDENTIAL_UNREADABLE -> R.string.password_needed_status
+    ConnectionError.PASSWORD_REJECTED -> R.string.password_rejected_status
+    ConnectionError.MPD_PERMISSION -> R.string.mpd_access_denied_status
+    else -> null
 }

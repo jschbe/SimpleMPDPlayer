@@ -50,7 +50,7 @@
     <string name="timer_error_network">Не удалось подтвердить паузу. Проверьте сервер и сеть. Автоматического повтора не будет.</string>
     <string name="timer_error_timeout">Время ожидания паузы истекло; результат неизвестен. Автоматического повтора не будет.</string>
     <string name="timer_error_rejected">MPD отклонил паузу. Проверьте права на сервере.</string>
-    <string name="timer_error_authentication">MPD требует аутентификацию или разрешение для паузы. Пароли не поддерживаются.</string>
+    <string name="timer_error_authentication">MPD запретил доступ для таймера сна. Проверьте разрешения сервера и пароль профиля.</string>
     <string name="timer_error_permission">Не удалось отправить паузу. Проверьте разрешение Android на локальную сеть.</string>
     <string name="timer_error_protocol">Не удалось проверить ответ сервера. Пауза не подтверждена.</string>
     <string name="timer_error_scheduling">Android не смог зарегистрировать таймер или регистрация была прервана. Включите его снова.</string>
@@ -158,7 +158,7 @@
     <string name="reconnecting">Повторное подключение…</string>
     <string name="connection_waiting_network">Сеть недоступна</string>
     <string name="connection_lost">Соединение потеряно. Проверьте сервер и сеть.</string>
-    <string name="mpd_rejected">MPD отклонил команду. Проверьте права на сервере или доступность выбранного трека. Аутентификация по паролю пока не поддерживается.</string>
+    <string name="mpd_rejected">MPD отклонил команду. Проверьте права на сервере или доступность выбранного трека.</string>
     <string name="network_error">Ошибка сети. Проверьте соединение и повторите попытку.</string>
     <string name="allow_local_network">Разрешить локальную сеть</string>
     <string name="local_network_permission_required">Для подключения к серверу MPD нужен доступ к локальной сети. Разрешите доступ или включите «Устройства поблизости» в настройках приложения, если запрос больше не появляется.</string>
@@ -208,4 +208,19 @@
     <string name="clear_queue_unavailable_message">Не удалось отобразить очередь. Удалить все композиции из активной очереди MPD?</string>
     <string name="library_listing_limit">В этой папке слишком много данных для отображения.</string>
     <string name="mpd_response_limit">Ответ MPD превысил лимит загрузки.</string>
+    <string name="mpd_password">Пароль MPD</string>
+    <string name="password_keep">Оставить сохранённый пароль</string>
+    <string name="password_replace">Заменить пароль</string>
+    <string name="password_remove">Не использовать пароль</string>
+    <string name="password_backup_hint">Пароли остаются на этом устройстве. Введите их снова после восстановления.</string>
+    <string name="password_reentry">Введите пароль для этого хоста и порта MPD или выберите подключение без пароля.</string>
+    <string name="password_invalid">Введите допустимый пароль без переносов строки и символов NUL.</string>
+    <string name="password_save_failed">Не удалось сохранить пароль на этом устройстве. Попробуйте ещё раз.</string>
+    <string name="password_needed_status">Требуется пароль MPD</string>
+    <string name="password_rejected_status">Пароль MPD отклонён</string>
+    <string name="mpd_access_denied_status">Доступ к MPD запрещён</string>
+    <string name="password_missing_detail">Введите пароль MPD снова в настройках сервера. На этом устройстве его нет.</string>
+    <string name="password_unreadable_detail">Не удалось прочитать сохранённый пароль. Введите его снова в настройках сервера.</string>
+    <string name="password_rejected_detail">MPD отклонил пароль. Проверьте его в настройках сервера.</string>
+    <string name="mpd_access_denied_detail">MPD отклонил эту команду. Проверьте разрешения сервера и пароль профиля.</string>
 </resources>

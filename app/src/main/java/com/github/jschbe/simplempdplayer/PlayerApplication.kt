@@ -21,18 +21,27 @@ class PlayerApplication : Application() {
         // Media3 source exceptions may contain remote details; expose only our error categories.
         androidx.media3.common.util.Log.setLogLevel(androidx.media3.common.util.Log.LOG_LEVEL_OFF)
         sleepTimer.observe(playbackScope)
+        playbackScope.launch { serverSettings.pruneCredentials() }
     }
 
     // Shared while the process lives: background metadata must not depend on an Activity's collectors.
     private val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    internal val credentials by lazy { AndroidMpdCredentials(this) }
+    internal val serverSettings by lazy {
+        ServerSettingsStore(serverDataStore, credentials) { old ->
+            kotlinx.coroutines.withContext(Dispatchers.Main.immediate) {
+                if (repositoryDelegate.isInitialized()) repository.invalidateCredential(old)
+            }
+        }
+    }
     val sleepTimer: SleepTimerController by lazy {
-        SleepTimerController(SleepTimerStore(sleepTimerDataStore), ServerSettingsStore(serverDataStore).settings,
+        SleepTimerController(SleepTimerStore(sleepTimerDataStore, serverDataStore), serverSettings.settings,
             AndroidTimerClock(this), AndroidTimerScheduler(this), profileMutationLock,
             pause = {
                 if (android.os.Build.VERSION.SDK_INT >= 37 &&
                     checkSelfPermission(android.Manifest.permission.ACCESS_LOCAL_NETWORK) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     TimerError.PERMISSION
-                } else MpdRepository.pauseForTimer(it, ::resolveTimerHost)
+                } else MpdRepository.pauseForTimer(it, ::resolveTimerHost, resolvePassword = credentials::resolve)
             }, playback = {
                 if (!repositoryDelegate.isInitialized()) null else repository.activeServer?.let { TimerPlayback(it, repository.state.value) }
             })
@@ -40,7 +49,7 @@ class PlayerApplication : Application() {
     private val repositoryDelegate: Lazy<MpdRepository> = lazy {
         MpdRepository(playbackScope, diagnostics = { message ->
             if (BuildConfig.DEBUG) android.util.Log.d("MpdConnection", message)
-        }, elapsedMillis = android.os.SystemClock::elapsedRealtime).also { repository ->
+        }, elapsedMillis = android.os.SystemClock::elapsedRealtime, resolvePassword = credentials::resolve).also { repository ->
             com.github.jschbe.simplempdplayer.mpd.MpdNetworkObserver(this, repository::networkChanged).start()
             playbackScope.launch { repository.state.collect { sleepTimer.playbackChanged() } }
         }

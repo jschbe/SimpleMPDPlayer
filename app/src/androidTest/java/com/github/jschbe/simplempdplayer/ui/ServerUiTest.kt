@@ -165,6 +165,31 @@ class ServerUiTest {
         }
     }
 
+    @Test fun passwordProbeUsesDraftThenCredentialSaveFailureLeavesSettingsAndConnectionsAlone() {
+        show(listOf(first), first.id)
+        servers()
+        compose.onNodeWithContentDescription("Add server").performClick()
+        compose.onNodeWithText("Name").performTextInput("Password fixture")
+        compose.onNodeWithText("Host").performTextInput("localhost")
+        compose.onNodeWithTag("mpd_password").performScrollTo().performTextInput("synthetic draft password")
+        compose.onNodeWithText("Test").performClick()
+        compose.runOnIdle {
+            assertEquals(3, connections.size)
+            assertTrue(connections.take(2).none { it.closed })
+            assertTrue(connections.last().closed)
+            assertEquals(listOf("password", "status"), connections.last().commands)
+            assertEquals(listOf(first), model.state.value.settings.servers)
+        }
+        compose.onNodeWithText("Save").performClick()
+        compose.onNodeWithText("Could not save the password on this device. Try again.").performScrollTo().assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(first.id, model.state.value.settings.selectedId)
+            assertEquals(listOf(first), model.state.value.settings.servers)
+            assertEquals(3, connections.size)
+            assertTrue(connections.take(2).none { it.closed })
+        }
+    }
+
     @Test fun dropdownSwitchesServerWithoutConfirmation() {
         show(listOf(first, second), first.id)
         compose.onNodeWithTag("server_dropdown").performClick()
@@ -275,10 +300,13 @@ class ServerUiTest {
 
     private class FakeConnection : MpdConnection {
         var closed = false
+        val commands = mutableListOf<String>()
         override suspend fun connect(host: String, port: Int) {}
         override suspend fun ping() {}
-        override suspend fun execute(name: String, vararg arguments: String) =
-            if (name == "status") listOf("state" to "stop", "playlistlength" to "0", "playlist" to "1") else emptyList()
+        override suspend fun execute(name: String, vararg arguments: String): List<Pair<String, String>> {
+            commands.add(name)
+            return if (name == "status") listOf("state" to "stop", "playlistlength" to "0", "playlist" to "1") else emptyList()
+        }
         override suspend fun idle(): Set<String> = awaitCancellation()
         override fun close() { closed = true }
     }

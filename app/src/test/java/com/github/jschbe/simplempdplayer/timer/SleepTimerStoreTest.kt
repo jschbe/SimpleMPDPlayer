@@ -24,6 +24,10 @@ class SleepTimerStoreTest {
             val original = record.copy(status = status, deadline = if (status == TimerStatus.WAITING) null else record.deadline, error = if (status == TimerStatus.FAILED) TimerError.UNCERTAIN else null)
             assertEquals(original, TimerCodec.decode(TimerCodec.encode(original)))
         }
+        TimerError.entries.forEach { error ->
+            val original = record.copy(status = TimerStatus.FAILED, error = error)
+            assertEquals(original, TimerCodec.decode(TimerCodec.encode(original)))
+        }
         listOf("", "garbage", TimerCodec.encode(record).replace(record.token, "not-a-token"),
             TimerCodec.encode(record).replace("\t60010\t", "\t9\t"),
             TimerCodec.encode(record).replace("\tlocalhost\t", "\thttp://bad.invalid/\t"))
@@ -64,4 +68,67 @@ class SleepTimerStoreTest {
         assertEquals(30, recovered.minutes)
         assertNull(recovered.record)
     }
+    @Test fun migratesLegacyDurationIncludingExplicitDefaultWithoutChangingExistingTimers() = runTest {
+        for (minutes in listOf(30, 45)) {
+            for (saved in listOf(record, record.copy(status = TimerStatus.WAITING, deadline = null))) {
+                val runtime = MemoryPreferences()
+                val backup = MemoryPreferences()
+                SleepTimerStore(runtime).write(TimerSettings(minutes, saved))
+                val before = runtime.data.value
+                val migrated = SleepTimerStore(runtime, backup)
+                assertEquals(TimerSettings(minutes, saved), migrated.read())
+                assertEquals(minutes, backup.data.value[preferredMinutesKey])
+                assertEquals(before, runtime.data.value)
+                assertEquals(TimerSettings(minutes, saved), migrated.read())
+                assertEquals(1, backup.writes)
+            }
+        }
+    }
+
+    @Test fun restoredDurationWinsOverFreshOrLegacyValuesAndDoesNotRestoreTimer() = runTest {
+        val runtime = MemoryPreferences()
+        val backup = MemoryPreferences()
+        val fresh = SleepTimerStore(runtime, backup)
+        assertEquals(TimerSettings(), fresh.read())
+        assertFalse(backup.data.value.contains(preferredMinutesKey))
+        fresh.confirmMinutes(30)
+        assertEquals(30, backup.data.value[preferredMinutesKey])
+        SleepTimerStore(runtime).write(TimerSettings(45, record))
+        assertEquals(TimerSettings(30, record), fresh.read())
+        fresh.write(TimerSettings(60, record))
+        val restored = SleepTimerStore(MemoryPreferences(), backup)
+        assertEquals(TimerSettings(60), restored.read())
+        assertEquals(60, backup.data.value[preferredMinutesKey])
+    }
+
+    @Test fun failedMigrationRemainsRetryableAndFailedDurationChangePreservesTimer() = runTest {
+        val runtime = MemoryPreferences()
+        val backup = MemoryPreferences()
+        SleepTimerStore(runtime).write(TimerSettings(45, record))
+        backup.failWrite = true
+        val store = SleepTimerStore(runtime, backup)
+        assertEquals(TimerSettings(45, record), store.read())
+        assertFalse(backup.data.value.contains(preferredMinutesKey))
+        backup.failWrite = false
+        assertEquals(TimerSettings(45, record), store.read())
+        assertEquals(45, backup.data.value[preferredMinutesKey])
+        runtime.failWrite = true
+        assertTrue(runCatching { store.write(TimerSettings(60)) }.exceptionOrNull() is IOException)
+        assertEquals(TimerSettings(45, record), store.read())
+        assertEquals(45, backup.data.value[preferredMinutesKey])
+    }
+
+    private class MemoryPreferences : androidx.datastore.core.DataStore<Preferences> {
+        override val data = kotlinx.coroutines.flow.MutableStateFlow(emptyPreferences())
+        var writes = 0
+        var failWrite = false
+        override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences {
+            if (failWrite) throw IOException()
+            return transform(data.value).also {
+                writes++
+                data.value = it
+            }
+        }
+    }
+
 }

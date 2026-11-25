@@ -57,7 +57,7 @@ class BrowserUiTest {
             BackHandler { fallbackBacks++ }
             SimpleMPDPlayerTheme {
                 ServersApp(
-                    state = ui.value, onAdd = {}, onEdit = {}, onDismissEditor = {}, onSave = {}, onDelete = {}, onSelect = {},
+                    state = ui.value, onAdd = {}, onEdit = {}, onDismissEditor = {}, onSave = { _, _ -> }, onDelete = {}, onSelect = {},
                     onReconnect = {}, onReload = {}, onGrantNetworkAccess = {}, onAction = playerActions::add,
                     onLoadBrowser = { if (!ui.value.browser.loaded && !ui.value.browser.listingLimited) browse(ui.value.browser.path, ui.value.browser.generation) },
                     onBrowse = ::browse, onEnqueue = { uri, replace, generation -> actions += Triple(uri, replace, generation) },

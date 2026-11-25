@@ -26,7 +26,7 @@ class MpdSleepTimerTest {
     }
 
     @Test fun ackAndAuthenticationFailuresRemainDistinct() = runBlocking {
-        for ((code, expected) in listOf(3 to TimerError.AUTHENTICATION, 4 to TimerError.AUTHENTICATION, 5 to TimerError.REJECTED)) {
+        for ((code, expected) in listOf(3 to TimerError.PASSWORD_REJECTED, 4 to TimerError.MPD_PERMISSION, 5 to TimerError.REJECTED)) {
             FakeMpdServer { socket ->
                 socket.send("OK MPD 0.23.0\n")
                 assertEquals("pause \"1\"", socket.getInputStream().bufferedReader().readLine())

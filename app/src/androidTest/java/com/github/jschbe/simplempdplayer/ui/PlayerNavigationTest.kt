@@ -58,7 +58,7 @@ class PlayerNavigationTest {
         val content: @androidx.compose.runtime.Composable () -> Unit = {
             SimpleMPDPlayerTheme {
                 ServersApp(
-                    state = ui.value, onAdd = {}, onEdit = {}, onDismissEditor = {}, onSave = {}, onDelete = {},
+                    state = ui.value, onAdd = {}, onEdit = {}, onDismissEditor = {}, onSave = { _, _ -> }, onDelete = {},
                     onSelect = {}, onReconnect = {}, onReload = {}, onGrantNetworkAccess = {}, onAction = { actions.add(it) },
                     onQueueAction = { action, context -> actions.add(action); queueContexts.add(context) },
                     onRetryQueue = { queueRetries.add(it) },

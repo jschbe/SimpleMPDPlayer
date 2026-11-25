@@ -34,8 +34,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalConfiguration
 import com.github.jschbe.simplempdplayer.ui.AppLanguage
-import com.github.jschbe.simplempdplayer.data.ServerSettingsStore
-import com.github.jschbe.simplempdplayer.data.serverDataStore
 import com.github.jschbe.simplempdplayer.ui.ServersApp
 import com.github.jschbe.simplempdplayer.ui.theme.SimpleMPDPlayerTheme
 
@@ -45,7 +43,7 @@ class MainActivity : AppCompatActivity() {
         val app = application as PlayerApplication
         ViewModelProvider(this, viewModelFactory {
             initializer {
-                ServersViewModel(ServerSettingsStore(app.serverDataStore), networkPermission = {
+                ServersViewModel(app.serverSettings, networkPermission = {
                     Build.VERSION.SDK_INT < 37 || app.checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED
                 }, sharedRepository = app.repository, localStream = app.localStream, sleepTimer = app.sleepTimer)
             }

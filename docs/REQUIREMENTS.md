@@ -1,152 +1,201 @@
-# Requirements
+# Implemented requirements
 
-SimpleMPDPlayer is a minimal Android MPD client for Android 12 / API 31 and newer. This file defines behavior; [architecture](ARCHITECTURE.md) describes implementation. English is the UI source/fallback; code comments and documentation are English.
+SimpleMPDPlayer is a minimal Android MPD client for Android 12 (API 31) and
+later. This document describes product behavior. See the [user guide](USER_GUIDE.md)
+for instructions, [architecture](ARCHITECTURE.md) for implementation, and
+[verification history](VERIFICATION.md) for evidence and its limits.
 
-## Implemented: M1 server management
+## Profiles, settings and authentication
 
-- Add/edit/delete profiles, with deletion confirmation. Stable UUID, required name/host, MPD port default 6600, stored HTTP stream port default 8000. Validate ports 1–65535 and hostname/IPv4/IPv6 syntax without DNS.
-- Add/edit requires a unique display name, compared case-insensitively after trimming leading/trailing whitespace and excluding the edited profile by stable ID. Show a localized error at the name field and disable Save for an invalid name. Preserve legacy duplicate names and IDs on load and unrelated writes; each affected profile can be explicitly renamed to a unique name.
-- Persist profiles and the last selected ID in DataStore. Reconnect on startup; never automatically choose a different server after deletion or invalid data. Saving any added/edited profile activates it and starts one connection attempt, including name-only edits; failed connections retain the profile and selection.
-- Exactly one selected server. Switch/disconnect closes all of its technical connections and clears its player/queue snapshot. Do not synchronize multiple servers.
-- Keep valid records and report corruption recovery. For an ordinary read failure, retain the last confirmed profiles, selection, order, appearance and track-information preference. Keep an existing MPD session and enabled local reception usable. Suspend settings writes until a successful reload. Servers shows the error and **Retry**, including on cold start without a confirmed configuration. Automatic Add server opens only after a successful read confirms an empty list.
-- No password support yet: no password fields, authentication, Keystore or encryption dependency. Existing network permissions and Android 17 local-network permission handling remain available.
+- Store validated profiles with stable IDs, a name, a hostname or IP address,
+  and MPD and HTTP ports (defaults 6600 and 8000, valid range 1–65535).
+  Name uniqueness ignores case and surrounding whitespace and excludes the
+  profile being edited. Preserve existing duplicate names during unrelated
+  writes and allow each one to be renamed.
+- Open Servers when nothing is selected. Open Add server once after a successful
+  load confirms an empty list, or after deleting the last profile. Cancel
+  leaves the app usable. Only the drag handle starts a reorder. The header
+  dropdown reflects the saved order and switches profiles without confirmation.
+  Confirm deletion and disconnect a deleted selection without picking another.
+- Test runs an independent greeting, optional authentication and read-only
+  status check. It preserves selection, settings, interactive sockets, local
+  reception and MPD playback. Parallel probes are prevented. Save persists
+  the profile and selection before closing the editor and connecting, including
+  on an unchanged endpoint. A storage error leaves the editor open. A connection
+  failure keeps the saved profile selected. Stale results cannot issue notices
+  for a different editor or server.
+- Support passwordless and protected profiles. Mask password drafts, leave
+  saved passwords out of the editor, and discard drafts on configuration
+  recreation or process death. Preserve spaces, Unicode, quotes and
+  backslashes, and reject line breaks and NUL. Distinguish keep, replace and
+  explicit removal. Require a new password or explicit removal after a
+  control host/port change. An HTTP-port edit, rename, reorder, theme or
+  language change does not change the credential binding.
+- Authenticate each new control, idle, Test and timer socket separately.
+  Distinguish missing or unreadable credentials, rejected passwords, denied
+  MPD commands and Android LAN permission. Preserve the configured password
+  after rejection. Replacing or removing a credential invalidates the old
+  session. Deleting a protected profile removes its local credential.
+- Restore the last valid selection on startup. Recover valid data from malformed
+  settings and flag recovery. On ordinary read failure, preserve the last
+  confirmed settings and keep any healthy session and enabled local receiver
+  usable. Disable settings writes until a successful Retry. A failed cold
+  read does not open first-run setup or clear profiles.
 
-## Implemented: M2 navigation and player
+## Player, browser and queue
 
-### Navigation
+- Keep one interactive server, with one command and one dedicated idle
+  connection. MPD is authoritative for playback, metadata, options, mixer
+  and queue. Show confirmed readback after commands and external events.
+  Stale responses must not update another server's UI.
+- Display Browser, Player and Queue in that order with shared tab/swipe state.
+  Player is the initial tab with a selection. Settings offers Servers, Sleep
+  timer, Appearance, Language and About.
+- Display current title or filename, available artist/album, playback state
+  and elapsed time. Persist the global expanded/collapsed track-information
+  preference. Offer Play/Pause, Stop, Previous, Next, seek when duration is
+  known and MPD volume (0–100) where the mixer is supported. Preserve the
+  seek thumb while dragging and submit on gesture completion, guarded against
+  a known track change. Disable unavailable or pending commands.
+- Show Random as a separate switch. Derive Repeat from MPD: None = 0/0,
+  Queue = 1/0 and Single = 1/1 for repeat/single. Keep all six combinations
+  with Random. Preserve and display one-shot, stop-after-track and unknown
+  states until explicit selection. Read current options before changing them
+  and refresh confirmed status after success or partial rejection.
+- Center the compact Random/Repeat groups together, or each on a separate row
+  when wrapping. Match their typography. Place playback and sleep status
+  on one row with matching styles and large-font wrapping. The full timer
+  status area is an accessible 48 dp minimum button that opens the existing
+  timer dialog without pressed-state feedback, including when playback
+  controls are unavailable. Opening it changes no timer or MPD state.
+- Browse one directory at a time with directories first, names/metadata
+  fallbacks, a path and Up. Android Back goes to the parent while Browser is
+  visible in a subdirectory, including during a pending read. Tab changes
+  preserve the current listing and scroll. Show loading, empty, disconnected,
+  error and oversized states. Skip stored playlists with a notice.
+- Append a file or recursive folder with one MPD add. Replace requires
+  confirmation and runs clear followed by add without starting playback.
+  Distinguish failed, partial and uncertain changes, including an acknowledged
+  mutation with failed readback. Other clients can still interleave changes.
+- Show a scrollable queue with current-entry highlighting, stable MPD IDs and
+  distinct duplicate paths. Locate the current song on first visible load and
+  preserve scroll during ordinary updates. Expose play, remove, move up/down
+  and confirmed Clear. Bound queue loading and publish only a complete,
+  consistent version. Oversized or rapidly changing queues expose Retry.
+  Per-entry actions require a complete queue. Playback and confirmed Clear
+  of a reported nonempty queue remain available with usable control.
+- Invalidate queue confirmations and entry menus when their live control
+  session changes. They are not restored on Activity recreation. Validate
+  displayed queue version before Clear and current ordering before Move.
+  Ordinary MPD command rejections retain honest status/readback.
 
-- Header shows the selected server name, subtle connection status and a Settings overflow menu. Offer manual reconnect when disconnected/failed; show understandable loading and error states.
-- Main tabs are **Browser, Player, Queue**, in that order. Player opens by default with a selected server. With no selection, open Servers management; with no profiles, automatically open Add server once per entry into the empty state. Cancel leaves the app usable without reopening the dialog.
-- Tabs and horizontal swipes share one state: left from Player opens Queue, right opens Browser, reverse gestures return to Player. Queue scrolls vertically. System Back returns to the parent only while Browser is visible in a subdirectory; otherwise retain existing Back behavior for Servers/dialogs and Android.
-- The header server-name dropdown lists stored profiles in order, marks the active one and switches without confirmation. Settings contains Servers, Sleep timer, Appearance, Language and About. Servers is not a main tab.
+## Recovery and freshness
 
-### Player
+- Serialize MPD exchanges. Control failure or server switch closes both
+  sockets and cancels old work. An isolated idle failure preserves healthy
+  control and repairs only idle. Revalidate player and queue when resubscribing,
+  even after reconnecting to an unchanged queue version.
+- Retry transient failures at most five times per cycle, with delays of 1, 2,
+  4, 8 and 16 seconds. Pause during known offline periods without consuming
+  attempts. Manual Reconnect starts a fresh cycle. A qualified foreground
+  return or unlock can rearm an exhausted transient cycle once. Ordinary
+  focus and network return alone cannot do so. Permanent auth, permission and
+  malformed-protocol failures need correction. Never replay a mutation.
+- Use a compact status row for connection progress, offline, failure and
+  relevant actions. Offer Reconnect, Edit server or Allow local network
+  as appropriate. A healthy control connection can remain usable during an
+  idle failure. Expose stale status to accessibility.
+- Coalesce foreground/focus health checks, including unlock without Activity
+  recreation. Freeze stale progress. Interpolation requires confirmed Playing
+  and live idle updates. A fresh control read can confirm playback for
+  waiting-timer purposes even when idle or queue metadata is unavailable.
 
-- Show current title, optional artist/album, state, elapsed position and known duration. Missing Title falls back to filename; missing artist/album is omitted. Track information is expanded by default; a labeled chevron/tappable row collapses it to the title/filename in smaller type. Persist the expansion as a global DataStore UI preference, independent of title/server changes. Unknown duration has no misleading seek range. An empty queue has an explicit empty state. No cover art.
-- Play/Pause sends pause 1 while playing, pause 0 while paused, or play while stopped. Also provide stop, previous, next, seekcur, Random, Repeat and MPD setvol. Place playback status left and compact sleep status right on one row, using identical font size, weight and text style; wrap text at large sizes without overlap. The entire sleep-status area is an accessible, minimum-48-dp-high button opening the existing Settings → Sleep timer dialog, also while playback controls are unavailable. Opening it must not change timer state or send MPD commands. Random has an immediately adjacent On/Off switch; Repeat is a compact dropdown with **None**, **Queue**, **Single**. Share a row when space permits and wrap without clipping on narrow screens or large fonts.
-- Repeat is derived solely from MPD status: None = `repeat 0` / `single 0`, Queue = `repeat 1` / `single 0`, Single = `repeat 1` / `single 1`. Random is independent; all six combinations are supported, including Single with Random enabled. No local repeat/shuffle logic or persisted repeat preference.
-- The closed Repeat label/value matches Random's font size, weight, text color and vertical alignment. Center Random and Repeat together horizontally, centering each group on its own row when wrapped. Keep compact spacing and large-font wrapping, with the existing Material 3 selection styling inside the opened menu.
-- The clickable Player sleep-status area has no ripple, overlay or pressed-state background; its touch target, accessibility semantics and dialog action remain available.
-- Preserve external `single: oneshot`, stop-after-track (`repeat 0` / `single 1`) and missing/unexpected repeat/single values on read; display them explicitly rather than claiming a supported mode. An explicit selection may normalize them. Synchronize external changes through existing idle events.
-- Read fresh status before Repeat changes and send only differing/unknown required fields. Serialize the whole command sequence and confirmed readback against other app commands. MPD provides no transaction against other clients; after an ACK/partial failure read actual status again. Transport loss closes the session, retains a stale snapshot and recovers by reads only, without replaying the mutation.
-- Interpolate progress locally while playing, without per-second network polling. Resynchronize after commands and external changes. Send seek only on gesture completion and preserve the user's thumb position during dragging. Do not seek a different song after a known title change.
-- MPD volume is 0–100; missing/negative mixer volume hides its control. It is independent of Android device volume.
-- Disable commands while disconnected or pending. Do not optimistically change server playback/options/queue; show confirmed readback. ACK rejection and transport failures remain distinguishable and actionable.
+## Phone listening and Android media controls
 
-### Queue
+- Start **Listen on phone** Off and require explicit activation. Receive only
+  the selected profile's root HTTP stream. No MPD credential is sent over
+  HTTP. Keep phone volume separate from MPD volume. An accessible info button
+  explains the receiver without toggling it.
+- Preserve an enabled receiver through ordinary Activity recreation and
+  transient same-server recovery or manual Reconnect. Save, server switch,
+  deletion, terminal control failure or manual Off releases the receiver as
+  applicable. HTTP failures require manual local-audio retry. Enabling or
+  disabling the receiver, audio focus changes and route loss send no MPD
+  commands. A new process does not resume reception.
+- Local playback follows confirmed MPD state. A ready stream can carry
+  silence while MPD is paused. Resume rejoins the live origin. HTTP status,
+  decoder buffering and audio focus do not change MPD metadata or status.
+- Provide one Media3 session only while local listening is authorized.
+  System notification, lock-screen and compatible headset actions offer
+  MPD Play/Pause, Previous and Next, with confirmed title/artist/album and
+  playback state. The notification opens the app. No system seek, Stop,
+  queue editing, artwork or independent HTTP duration. Revoke old controller
+  actions on stop or switch and disable unavailable controls during recovery.
+  Android determines routing, rendering and background restrictions.
 
-- Read playlistinfo into a vertically scrollable list with title, optional artist/duration, highlighted current song and stable MPD-ID keys. Duplicate paths remain distinct entries. Long titles wrap/truncate appropriately.
-- Locate the current song on first visible load for a server; preserve scrolling after user interactions and ordinary updates.
-- Tap to playid, remove via deleteid, clear with confirmation, move up/down via moveid. Resolve moves against a fresh queue; unavailable entries can fail without crashing.
-- MPD is the only authoritative queue and playback source. No persistent local queue or separate music library.
+## Sleep timer
 
-### Synchronization and lifecycle
+- Support one global, independent one-shot timer. Offer 15, 30, 45 and 60
+  minutes or Custom (1–1440 whole minutes, default 30). Save the preferred
+  duration, including an explicitly selected default preset. Apply a valid
+  changed custom value via keyboard or dialog Done. Preserve a failed or
+  unavailable draft for retry/cancel and retain it across Activity recreation
+  without resubmitting. Applying a duration leaves an Off timer Off.
+- On binds the selected profile. Confirmed Playing starts the full duration.
+  Missing, stale, paused or stopped status waits with no deadline or alarm.
+  Enabling or changing duration can request a fresh read from the selected
+  target with usable control. Only current Playing for the bound endpoint
+  starts a waiting timer. Waiting cannot observe playback while the app is
+  inactive or the bound profile is unselected. Start from the next valid
+  Playing observation, without reconstructing prior playback.
+- Once counting down, later playback changes do not move the deadline.
+  Changing duration replaces the generation on the original target, and
+  either counts down immediately or waits again. Off cancels it. Selection
+  changes preserve the target. Host, either port or deletion cancels it.
+  Rename, reorder, theme, language or password-only changes preserve it.
+- Retain waits or monotonic deadlines through normal restarts in the same
+  boot. Reboot or an invalid elapsed reference cancels them. Use one inexact
+  Android alarm without exact-alarm permissions. Show Waiting, countdown,
+  Due and terminal states separately. The Android delivery time can lag
+  behind the deadline. Wall clock changes affect the estimated end only.
+- Revalidate the original profile and latest credential. A durable generation
+  claim permits one independent, bounded explicit `pause 1` attempt. Acknowledge
+  before reporting success. Early, stale or duplicate events send nothing.
+  Changes before the claim can cancel the attempt. Changes after the claim
+  wait for it. A known pre-claim failure is reconciled when possible.
+  Interrupted claimed delivery remains uncertain and is not replayed.
+  Persist sanitized failures for inspection. No timer-only polling, second
+  interactive server or background service.
 
-- One command socket and one idle event socket connect to the same selected server. Observe player/playlist/mixer/options changes, refresh confirmed snapshots and prevent idle from blocking commands.
-- Never start duplicate listeners through recomposition/Activity recreation. Switching cancels/closes old work, resets state and prevents late results from changing the new server's UI.
-- Initial loads and errors are bounded. Control failure closes both connections. An isolated listener failure retains healthy control. Use the bounded recovery policy below and retain manual reconnect. Cached information after failure is marked stale.
-- Load large queues in bounded ranges, preserving order, metadata and MPD song IDs, including repeated files. Publish the queue only after confirming a consistent version and length. If the load exceeds its budget or repeated edits prevent a confirmed queue, show that state and offer Retry. Confirmed playback and explicitly confirmed Clear remain available when the server reports a nonempty queue. Per-entry actions require a complete queue.
-- Clear confirmation and entry actions belong to the live control session. Reconnect, endpoint edits and server switching invalidate open confirmations and menus. Activity recreation does not restore them. For a displayed queue, check that its version still matches before Clear. Require confirmed ordering before Move. Other clients can still edit the MPD queue between a check and a command.
-- No new background service, HTTP audio or local media session in M2.
+## Languages, appearance, privacy and scope
 
-## Implemented: M2 UI addendum
+- Support English, German, French, Italian, Spanish, Ukrainian and Russian.
+  Use complete English fallback and AppCompat/platform per-app locale storage.
+  Follow system language by default or apply a persistent explicit choice.
+  Language changes preserve healthy connections, reception, timer and theme.
+  Keep metadata literal. Use Android formatting for estimated timer dates.
+  Support large text and localized labels, placeholders and plurals. See the
+  [translation reference](LOCALIZATION.md).
+- Persist System default, Light or Dark and keep window icon contrast in sync.
+  Provide adaptive, legacy and API 33+ themed launcher resources. About
+  includes the version, source link and offline GPL and third-party notices.
+  Preserve the [licensing and corresponding-source terms](LICENSING.md).
+- Android cloud backup is allowed when encryption capabilities are present.
+  Profiles, stable IDs, password-configured markers, selection/order and
+  ordinary preferences including the preferred sleep duration are eligible
+  for backup and direct device transfer. Language follows platform behavior.
+  Passwords and live timer records are excluded. Restored protected profiles
+  require local password re-entry or explicit removal. Restoration does not
+  resume listening, rearm a timer or replay MPD mutations.
+- Use a trusted network or a separately configured secure tunnel. Ordinary
+  MPD and HTTP are unencrypted. Device-local credential encryption does not
+  protect transport or verify server identity.
 
-- Add/edit uses the same dialog: required name/host, host placeholder only (never an input default), validated ports 1–65535 with defaults 6600/8000. Test validates greeting/ping on a temporary connection, closes it, does not save or disturb active playback/control, and reports MPD available/unavailable plus a detailed inline failure. Prevent parallel tests and keep work off the main thread.
-- Save persists profile and selection together. Close the dialog only after successful persistence, then show Connecting… outside it. Emit Connected/Connection failed only after the actual current connection result, with stale notifications discarded. A failed storage write keeps the editor open; a failed connection keeps the profile saved/selected.
-- Servers has a top-right Add button, drag handles, name/endpoint, active marker and edit/delete actions. Only handle long-press starts dragging; commit order on drop and use it in the header. No server Move up/down buttons. Reordering does not reconnect or change selection.
-- Confirm every deletion with “Delete server?” and “Are you sure you want to delete "<name>"?”. Cancel changes nothing. Deleting the active profile disconnects without selecting another; deleting the last opens Add server once, and Cancel can leave it empty.
-- Appearance offers System default (initial), Light and Dark radio choices. Persist and apply immediately to all app screens/dialogs/menus; System default follows Android changes. Status/navigation-bar icons follow the effective theme without changing edge-to-edge layout.
-- Launcher/settings icons use the provided artwork with adaptive layers, API 33+ monochrome and legacy sizes. Preserve the original asset. The precomposed image requires approximate foreground/background separation; document that limit.
+### Deferred or out of scope
 
-## Implemented: M3 music-library browser
-
-- Browse the active MPD database by folder using `lsinfo` (root without arguments); fetch one level only when Browser first becomes visible or the user navigates/retries. Keep only the current listing, without a recursive library cache.
-- List directories before files. Use directory/filename fallbacks, Unicode names and available title/artist/duration metadata. Preserve spaces, quotes and backslashes through protocol escaping. Skip stored-playlist records with an explanatory notice; do not treat unknown types as files.
-- Folder taps navigate; show the current path and an Up control. Android Back navigates to the parent while browsing a subdirectory, including during loading. Preserve ordinary horizontal pager swipes. Returning to the current directory from another tab does not reload or reset its scroll.
-- File taps and trailing folder menus offer **Append to queue** / **Replace queue**. Append sends one `add <URI>` for either type; MPD handles recursive folders. Confirm every replacement, then serialize `clear` followed by `add <URI>` on the active command connection. Never start playback automatically.
-- Update the actual MPD queue through existing readback/idle synchronization; never maintain a separate local playlist. Report acknowledged mutations even when queue metadata cannot be loaded, and identify an exchange failure during readback separately. Report failed/uncertain additions and partial replacement after a successful clear explicitly; recursive additions may themselves be partial. There is no transaction, rollback or exclusion of other MPD clients.
-- Handle root/empty/loading/error/disconnected states and inaccessible folders. A directory ACK allows Retry or Up on the existing connection. An oversized directory has its own message and keeps the requested path through automatic connection recovery, after which Retry or Up use the fresh socket. Transport/protocol failures retain manual reconnect. A profile switch or manual reconnect starts Browser at the root. Discard old listings, menus, confirmations and asynchronous results when their connection is invalidated. Do not blindly replay mutations.
-- No search, covers, stored-playlist operations, local files/audio, timer or authentication is added.
-
-## Implemented: M4 optional local HTTP audio
-
-- Player exposes **Listen on phone**, independent of MPD transport and MPD volume. Replace its permanent explanatory text with an independently accessible info button/dialog next to the label; it explains HTTP reception, server transport and local-only Off without toggling the switch. Enable it manually for the connected active profile. Fresh process startup, Save and server switch leave it off; Activity recreation/returning to the app preserves an enabled receiver.
-- Receive only the active profile's root HTTP stream using its validated host and stream port. No separate songs, queue, library, download or offline playback. MP3 is the verified format; other formats depend on Media3/platform support. No server/output configuration is changed.
-- Turning reception off releases the player, HTTP connection, session and foreground service. It sends no MPD command, especially no pause/stop or disableoutput. Switch/delete/endpoint edits release the old receiver before starting the next MPD connection. Same-server control recovery and manual Reconnect retain an enabled receiver while recovery is pending. A stream error leaves MPD control connected; terminal control failure stops local reception.
-- Show Off, Connecting, Buffering, Receiving, Waiting for MPD, Android interruption and sanitized errors. Finite connection/read/buffering limits and no automatic retry; enable the switch or use **Retry local audio** to retry.
-- MPD status/current song remain authoritative for title, duration, position and all app transport controls. Local output pauses when MPD is paused/stopped/unknown; ready HTTP data is not evidence of music. On MPD resume rejoin the live origin to avoid replaying buffered silence. Latency between MPD status and audio is expected.
-- Use Media3 ExoPlayer in a MediaSessionService for background/screen-off playback, audio focus, default Android/Bluetooth routing and becoming-noisy handling. Device volume affects local audio only. Permanent focus loss/noisy events turn reception off without controlling MPD; transient focus loss may suppress and resume local audio through Media3.
-- The notification/lock screen displays available MPD title/artist/album and MPD state. No independent HTTP track duration/progress is advertised. M6 extends this originally read-only session with the bounded MPD transport actions below. Controllers/service restarts cannot authorize local playback.
-- No playback resumption receiver, persisted streaming flag or sticky restart. An enabled paused receiver may be reclaimed under Android background limits; foreground/audio-focus restrictions may require opening the app and manually retrying. With reception disabled no audio foreground service remains.
-- Explicitly allow cleartext HTTP for arbitrary user-configured hosts through network security configuration. Retain INTERNET and existing API 37 local-network permission behavior (API 36 has no mandatory new runtime LAN permission); add only media foreground-service permissions and WAKE_LOCK. No router/MPD changes.
-
-## Implemented: M5 sleep timer
-
-- Exactly one global, one-shot timer in Settings → **Sleep timer**. On/Off, a duration dropdown with **15 minutes**, **30 minutes**, **45 minutes**, **60 minutes**, **Custom…**; custom whole minutes 1–1440, default 30. Persist the last applied duration. No selected server means On is unavailable; enabling while disconnected is allowed but waits for confirmed playback. Local audio is not required.
-- On binds the selected profile. Confirmed MPD Playing on that endpoint starts the full duration. Paused, Stopped, unknown or stale status enters persistent **Waiting for playback**, with no deadline or scheduled alarm. Offline state, a known loss of idle updates, socket replacement and a return check awaiting readback invalidate cached confirmation. An up-to-date command read can confirm playback during an idle outage or when queue metadata is unavailable. When enabling or changing duration without reliable status, request a readback only if the target is the active server with usable control. The next valid Playing observation of that endpoint starts the full duration.
-- Once started, Pause/Stop/Play never suspend, extend or restart the deadline. Off cancels waiting/countdown and the OS alarm. Changing the applied duration replaces the old generation/deadline on its original target: start now if confirmed playing, otherwise wait again. Choosing an unchanged duration is idempotent. Only Off then On binds a new selection.
-- Keyboard IME Done and the dialog Done apply a valid custom duration through the same event. An unchanged value can be closed without a write. A changed draft stays visible while applying is unavailable, and a failed write leaves the draft and error visible for retry. Cancel discards the unapplied draft. Invalid input is rejected and explained. Duration application never enables a previously Off timer. On/Off uses the last applied value. Preserve in-progress custom editing across Activity recreation without replaying an event.
-- Display waiting separately from Off and countdown, with target name. Running countdown shows remaining/estimated due time in the dialog and compact minutes in Player; waiting has neither remaining time nor estimated end.
-- Persist the profile ID and endpoint snapshot at start. Selection changes preserve the original target. Deleting it or changing host, MPD port or HTTP stream port cancels it. Rename/order/theme changes do not alter its alarm or deadline. Revalidate the saved endpoint again before sending.
-- Expiry opens a short, independent MPD connection, validates the greeting and sends only explicit **pause 1**. Never toggle pause, stop, play, seek or change queue/options/volume/outputs. A paused/stopped server is never started; playback position is preserved. Close the connection reliably. Local audio follows ordinary MPD idle updates only; the timer never activates Media3.
-- Use an explicit immutable PendingIntent and non-exported BroadcastReceiver with AlarmManager.setAndAllowWhileIdle and ELAPSED_REALTIME_WAKEUP. No exact-alarm permission/request, boot receiver, polling service or additional foreground service. Receiver IO is bounded and uses goAsync/finally finish.
-- Retain waiting state or the monotonic countdown deadline and boot count across process/Activity restart without rescheduling an existing alarm. System clock changes affect only the estimated wall time. A different boot or invalid monotonic reference cancels stale state on the next app start; never rearm after reboot. Timer storage is excluded from backup/device transfer.
-- Persist terminal success, cancellation and sanitized error states. Success means acknowledged Pause. A known failed alarm delivery before the claim is shown for the matching generation and persisted when storage is available. An interrupted durable delivery claim remains uncertain. Alarm failures are never retried automatically. Ordinary storage read failures must not overwrite stored settings.
-- Unique generation per start/restart rejects stale/early/duplicate events. Serialize cancellation, replacement, profile writes and a claimed delivery. If cancellation/restart/profile change wins before claim, the old timer sends nothing. Once delivery has been claimed, changes wait for that short attempt; an already sent command cannot be recalled. A durable claim prevents replay after process death.
-- Waiting relies on the existing interactive repository while the process lives. No server-side detection guarantee while the process is dead/suspended or another server is selected; no second interactive server, permanent timer listener, service, wake lock or network polling. Reconcile stored state on resume, including reboot or profile changes. On resume and unlock, defer playback-based starting until current status is confirmed. Resume, reconnect or selecting the original server can supply that confirmation. If Playing is first observed later, begin the full duration then; an intervening play/pause episode may be missed. Apply reboot/endpoint invalidation to waiting records as well as countdowns.
-- Explain Android power-saving delays; zero remaining time means Due/Waiting for Android, never fabricated completion. Doze/Battery Saver may delay execution substantially; Force Stop, background restrictions, permissions and network failure prevent reliable delivery. No minute-exact or guaranteed execution, automatic retry loop or background-only toast error handling.
-
-## Implemented: M6 Android system media controls
-
-- Extend the existing local-audio MediaSessionService only. A session exists only for manually enabled **Listen on phone**; enabling/disabling it or constructing a session sends no MPD transport commands. Off closes local reception/session without changing MPD. No persistent control-only service or resumption receiver. Control recovery follows the bounded policy below.
-- Standard notification/lock-screen controls and Bluetooth/headset media keys offer Play/Pause, Next and Previous. All use the existing repository's serialized MPD operations and actual readback/idle updates. Explicit Play reads fresh status and sends `pause 0` when paused or `play` when stopped; already-playing Play is a no-op. Pause sends `pause 1` only while playing. Toggle uses confirmed MPD state, never HTTP decoder state. Next/Previous send `next`/`previous` without copying/changing the queue locally.
-- Display MPD title/artist/album and confirmed playback state from status/current-song/idle, including external clients and sleep-timer Pause. Missing title falls back to filename or server name; missing artist/album is omitted. No artwork, local seek, Stop, playlist editing, stream-item replacement or custom commands in system controls. App controls remain unchanged.
-- An HTTP stream receiving bytes/buffering/suppressed by Android does not define MPD playback state. Local audio focus/route loss and stream failures affect only the receiver. HTTP audio may lag behind metadata; no precise lock-screen position/duration is promised.
-- Bind asynchronous actions to the manually enabled stream generation and current repository session. Recheck authorization after waiting for a lock/status response. Off, explicit disconnect, terminal control failure or server change revoke old commands/controllers and discard old results; temporary same-server control recovery retains the session but disables its unavailable controls; an already transmitted MPD command cannot be recalled. ACK/transport failures do not fabricate success; normal in-app command errors remain available.
-- Android/OEM versions decide the exact media UI layout and available accessory buttons. Notification tap opens the app. Long pauses/background restrictions can reclaim the session; manual activation is required again. No permission, dependency, MPD output, timer or backup changes.
-
-## Implemented: bounded connection recovery
-
-- Retry transient setup/control/idle EOF, socket, network, refusal/unreachable and timeout errors at most five times, after 1/2/4/8/16 seconds. Reset retry state after successful setup/readback and restored idle subscription. Never automatically retry protocol/permission/MPD ACK errors or replay mutations with uncertain outcomes. The independent M5 one-shot timer still has no retries.
-- An isolated idle failure closes/replaces only the event socket and retains the healthy command socket and pending app command. Restore subscriptions and revalidate status, current song and queue within the load budgets, even when the queue version is unchanged. A command/readback/heartbeat failure closes both sockets and triggers full recovery under the same single retry budget.
-- Cancel old retries, checks and return authorizations on explicit disconnect, profile switch/edit/delete or manual restart. Reject stale results. Manual **Reconnect** starts a fresh cycle. After exhaustion, one qualified return or unlock can authorize a new transient recovery cycle for the current selection. A running cycle keeps its existing budget.
-- Pause attempts without consuming budget while Android knows there is no available network. A passive callback accepts LAN-only Wi-Fi/VPN and does not require Internet validation, bind routing or request a network. Returning to the foreground performs one serialized ping and snapshot check, recovering a failed control connection through the same bounded loop. Do not replace healthy sockets on Activity recreation.
-- Check when the resumed Activity regains focus, including unlock without Activity recreation. Both callback orders must work. Merge short bursts. A retry budget requires evidence of prior backgrounding or screen-off followed by an interactive, unlocked, focused Activity. Local UI focus changes and network return alone do not rearm exhausted recovery. A qualified return while offline can authorize one cycle that waits for network availability. An exhausted idle-only cycle repairs only idle unless control subsequently fails. Inactive profiles have no monitoring, retries or interactive connection errors.
-- The main screen uses one connection status row. Show a spinner when connecting or automatically reconnecting, including during backoff. Show network unavailability in the same row. Terminal failure or exhausted recovery shows **Connection failed** with **Reconnect**, including when healthy control survives an idle failure. Offer **Allow local network** for permission failures. Keep technical details in debug diagnostics and stale snapshot information in the status label's accessibility state. Freeze the displayed progress when offline or stale. A fresh readback resynchronizes the position. Interpolate only during confirmed Playing with ongoing idle synchronization.
-- Preserve already enabled same-server HTTP playback/session during transient control repair and manual Reconnect; use confirmed readback after restoration without restarting ExoPlayer for unchanged playing state. Never auto-enable/restart local listening. Explicit Off/switch and terminal control failure still release it; an HTTP/audio failure remains local and manually retried. Metadata can be stale during loss of control/events.
-- Keep retries process-local with cancellable coroutine delays and passive callbacks. No permanent background service or additional polling solely for recovery. Existing heartbeat/audio lifecycle remains; Android power restrictions or process death can delay/prevent recovery. Add only the normal `ACCESS_NETWORK_STATE` permission; no dependency, runtime prompt or MPD configuration change.
-
-## Implemented: M7.2 localization and licensing
-
-- Support exactly English (`en`), German (`de`), French (`fr`), Italian (`it`),
-  Spanish (`es`), Ukrainian (`uk`) and Russian (`ru`). Complete unqualified
-  English resources provide fallback; unsupported language requests do not crash.
-- Settings → Language defaults to System default. Display native language names;
-  persist explicit selections, apply immediately and clear the override when
-  returning to System default. Android 13+ system app-language settings and the
-  picker share one authoritative selection. Follow Android's effective locale
-  list, including device-language changes when following the system.
-- A language configuration change preserves profiles, selection, theme, retained
-  MPD control/event connections, manually enabled local audio and timer records.
-  Do not send playback/queue commands or restart streaming just to translate UI.
-  Refresh app-owned toast/notification text; inherited/system rendering remains
-  Android's responsibility. Server/user metadata, paths and protocol tokens stay
-  literal. Estimated timer dates/times follow the effective resource locale and
-  device 12/24-hour preference; playback duration semantics stay unchanged.
-- Preserve the supplied translation catalogs. Validate completeness, XML/AAPT2
-  escaping, argument positions/types, plural forms and numeric bounds against
-  English and `strings-en.csv`. Support scrolling/wrapping and large fonts in
-  language/legal dialogs; no arbitrary character-count limits.
-- License the application under **GPL-3.0-or-later**, with the complete canonical
-  GPL v3 text at repository root. Settings → About displays the build version,
-  license identifier, warranty summary, offline GPL/third-party texts and public
-  source URL. Third-party grants/notices remain applicable. Do not publish,
-  commit or alter signing as part of this milestone.
-
-## Future work
-
-Password authentication/storage and other features remain excluded from M7.2.
-
-## Privacy and limits
-
-Use a trusted network or separately configured secure tunnel. Direct MPD and ordinary HTTP are unencrypted. No telemetry, cloud services, registration, automatic port forwarding or assumed public exposure. Do not commit real endpoints or credentials. M4 deliberately enables HTTP cleartext for freely configured hosts; it does not provide authentication or encryption. Protocol resource limits and Android background constraints are documented in the architecture.
+Search, stored-playlist support, cover art, downloads, offline playback, a
+local queue/library, multi-server synchronization, multiroom, HTTP
+authentication, accounts, telemetry, a custom cloud service and automatic
+port forwarding are outside the current scope. Wider protocol, codec and
+device coverage and optional browsing/queue improvements are recorded in
+[architecture](ARCHITECTURE.md#open-technical-questions).

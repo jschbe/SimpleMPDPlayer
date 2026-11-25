@@ -28,7 +28,7 @@ class SleepTimerProcessProbe {
         store.saveAndSelect(profile)
         app.sleepTimer.setMinutes(15)
         app.sleepTimer.setEnabled(true)
-        val record = SleepTimerStore(app.sleepTimerDataStore).read().record!!
+        val record = SleepTimerStore(app.sleepTimerDataStore, app.serverDataStore).read().record!!
         assertEquals(TimerStatus.WAITING, record.status)
         assertFalse(AndroidTimerScheduler(app).hasPendingIntent())
         InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
