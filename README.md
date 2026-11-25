@@ -19,6 +19,14 @@ To hear the server's audio on your phone, turn on **Listen on phone** in Player.
 - Use English, German, French, Italian, Spanish, Ukrainian or Russian.
   Follow the system language or choose one in Settings.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/screenshots/browser.png" width="30%" alt="Browser">
+  <img src="docs/images/screenshots/player.png" width="30%" alt="Player">
+  <img src="docs/images/screenshots/queue.png" width="30%" alt="Queue">
+</p>
+
 ## Getting started
 
 You need **Android 12 (API 31) or later** and a reachable MPD server. To listen
