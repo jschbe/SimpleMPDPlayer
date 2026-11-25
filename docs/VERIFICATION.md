@@ -5,6 +5,44 @@ These reports record verification by milestone and review package. The
 describe the current implementation, and [development](DEVELOPMENT.md) explains
 how to reproduce available checks.
 
+## 1.0.1 Android local network permission
+
+On **2026-11-25**, the previous 1.0.0 `.devicetest` build on Android 17
+reproduced the Test error with no editor action or native request. Save
+persisted a profile without asking for access. Updating to 1.0.1 preserved
+that profile and issued neither a prompt nor an MPD connection on launch.
+
+The permanent Medium Phone API 37 AVD (`medium_phone_api_37`) used the
+official Google APIs x86_64 image, SDK package revision 8, with KVM on the
+NUC. Real native permission checks used only an isolated loopback MPD
+fixture. Test requested permission. The first denial left the editor open,
+and the second made App Settings the recovery action. Another Test did
+not prompt or redirect. Granting Nearby devices in Android Settings kept
+the ordinary draft fields. The fixture saw no sockets until the user
+explicitly repeated Test, which sent only `status`. A wrong synthetic MPD
+password then produced the separate MPD rejection.
+
+Save requested permission on a fresh install. After granting, the fixture
+observed one control and idle pair. A separate Save denial left one saved
+profile selected and a voluntary retry in the compact status. Android
+terminated the process when access was revoked. After restarting, the
+app opened no new socket until access was restored through Android Settings,
+then reconnected the saved selection once. These checks used permission
+state, process identity and new socket counts. Host-side TCP closure timing
+after revocation was not established.
+
+The two Android 17 Compose layout checks passed with Android font size at
+200% and all seven locales. On Medium Phone API 36, Test and Save worked
+against the loopback fixture without a permission prompt. The focused
+`.devicetest` suite passed **28 tests** with zero failures or skips,
+including the G03 external-language case. Debug and both device-test APKs
+built successfully. The full JVM suite passed **212 tests** with zero failures
+or skips. Lint reported **0 errors and 11 existing warnings**. The
+optimized Release APK built with a disposable key, passed APK signature
+and 16 KiB ZIP alignment checks, and launched on API 37 with the updated
+editor and About version. This verification did not use a production key
+or test a Play-distributed build.
+
 ## Privacy policy integration
 
 On **2026-11-25**, the Debug and device-test APKs built successfully,

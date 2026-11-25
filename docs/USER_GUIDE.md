@@ -18,10 +18,19 @@
    **Test** checks the greeting, authentication if configured, and read-only
    status on a separate connection. Read access alone does not guarantee
    permission to play, use idle updates, browse or change the queue.
-4. **Save** stores and selects the profile and starts a connection. A connection
-   failure leaves the saved profile available to edit. On Android 17 (API 37)
-   or later, grant **Allow local network** when prompted. If the prompt no longer
-   appears, enable the app's Nearby devices permission in Android settings.
+4. **Save** stores and selects the profile and starts a connection when Android
+   allows it. The saved profile remains available if access is denied or the
+   connection fails.
+
+On Android 17 (API 37) or later, **Test** and **Save** can open Android's
+local network permission dialog. The server editor explains why access is
+needed and offers **Allow local network** and **Open app settings**. If the
+permission prompt is unavailable, use **Open app settings** and allow
+**Nearby devices** under **Permissions**. The app checks access when you
+return and reconnects the selected saved profile when granted. In the
+editor, press **Test** again to check your draft. Ordinary profile fields
+stay in the editor while you visit settings. Android 12–16 have no
+separate local network permission request in this app.
 
 Give the MPD role access to status, current song, queue reads, idle and directory
 listing, plus the playback and queue commands you intend to use. Check server

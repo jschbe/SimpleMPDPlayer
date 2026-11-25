@@ -159,6 +159,9 @@ internal fun ServerEditorDialog(
     onSave: (ServerProfile, PasswordEdit) -> Unit,
     onTest: (ServerProfile, PasswordEdit) -> Unit,
     onReload: () -> Unit,
+    canRequestNetworkAccess: Boolean,
+    onGrantNetworkAccess: () -> Unit,
+    onOpenNetworkSettings: () -> Unit,
 ) {
     val server = editor.server
     val saving = state.saving
@@ -201,6 +204,20 @@ internal fun ServerEditorDialog(
         title = { Text(stringResource(if (server == null) R.string.add_server else R.string.edit_server)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!state.networkAllowed) {
+                    Text(stringResource(R.string.local_network_access_explanation))
+                    Text(stringResource(R.string.local_network_settings_hint), style = MaterialTheme.typography.bodySmall)
+                    FlowRow {
+                        if (canRequestNetworkAccess) {
+                            TextButton(onClick = onGrantNetworkAccess, enabled = !busy) {
+                                Text(stringResource(R.string.allow_local_network))
+                            }
+                        }
+                        TextButton(onClick = onOpenNetworkSettings, enabled = !busy) {
+                            Text(stringResource(R.string.open_app_settings))
+                        }
+                    }
+                }
                 ProfileTextField(name, { name = it }, R.string.server_name,
                     ProfileField.NAME in errors || duplicateName,
                     if (duplicateName) R.string.duplicate_server_name else R.string.invalid_name, !busy)
@@ -245,7 +262,9 @@ internal fun ServerEditorDialog(
                 if (state.saveFailed) ErrorText(R.string.settings_save_failed)
                 if (editor.passwordSaveFailed) ErrorText(R.string.password_save_failed)
                 val activeError = state.connection.error.takeIf { server != null && server.id == state.activeServer?.id }
-                (editor.testError ?: activeError?.takeIf { it.accessStatusLabel() != null })?.let { ErrorText(it.label()) }
+                (editor.testError ?: activeError?.takeIf { it.accessStatusLabel() != null })
+                    ?.takeUnless { !state.networkAllowed && it == ConnectionError.PERMISSION_REQUIRED }
+                    ?.let { ErrorText(it.label()) }
                 if (editor.testing) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CircularProgressIndicator(Modifier.size(20.dp))

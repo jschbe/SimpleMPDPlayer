@@ -107,9 +107,13 @@ for instructions, [architecture](ARCHITECTURE.md) for implementation, and
   focus and network return alone cannot do so. Permanent auth, permission and
   malformed-protocol failures need correction. Never replay a mutation.
 - Use a compact status row for connection progress, offline, failure and
-  relevant actions. Offer Reconnect, Edit server or Allow local network
+  relevant actions. Offer Reconnect, Edit server, Allow local network or Open app settings
   as appropriate. A healthy control connection can remain usable during an
   idle failure. Expose stale status to accessibility.
+- On Android 17 and later, offer the native local network permission request
+  on Test or Save and an explicit app-settings route for Nearby devices.
+  Denial keeps Test drafts available and leaves a saved profile selected.
+  Recheck permission on return and reconnect the saved selection after grant.
 - Coalesce foreground/focus health checks, including unlock without Activity
   recreation. Freeze stale progress. Interpolation requires confirmed Playing
   and live idle updates. A fresh control read can confirm playback for

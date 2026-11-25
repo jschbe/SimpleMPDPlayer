@@ -82,6 +82,65 @@ class ServersViewModelTest {
         assertEquals(ConnectionStatus.CONNECTED, f.vm.state.value.connection.status)
     }
 
+    @Test fun testPermissionDenialKeepsTheEditorAndGrantRequiresAnExplicitNewTest() = vmTest {
+        val f = fixture(networkAllowed = false)
+        runCurrent()
+        val token = f.vm.state.value.editor!!.token
+        f.vm.test(first)
+        runCurrent()
+        assertEquals(ConnectionError.PERMISSION_REQUIRED, f.vm.state.value.editor?.testError)
+        assertTrue(f.connections.isEmpty())
+
+        f.networkAllowed = true
+        f.vm.refreshNetworkPermission()
+        runCurrent()
+        assertEquals(token, f.vm.state.value.editor?.token)
+        assertNull(f.vm.state.value.editor?.testError)
+        assertTrue(f.connections.isEmpty())
+        f.vm.test(first)
+        runCurrent()
+        assertTrue(f.connections.single().closed)
+        assertEquals(0, f.data.writes)
+    }
+
+    @Test fun grantDuringSaveConnectsOnlyTheCommittedSelectionAndRevocationClosesIt() = vmTest {
+        val f = fixture(listOf(first), first.id, networkAllowed = false)
+        runCurrent()
+        assertEquals(ConnectionError.PERMISSION_REQUIRED, f.vm.state.value.connection.error)
+        val commit = CompletableDeferred<Unit>()
+        f.data.writeGate = { commit.await() }
+        f.vm.openEditor()
+        f.vm.save(second)
+        runCurrent()
+        assertTrue(f.vm.state.value.saving)
+        f.networkAllowed = true
+        f.vm.refreshNetworkPermission()
+        f.vm.onForeground()
+        runCurrent()
+        assertTrue(f.connections.isEmpty())
+
+        commit.complete(Unit)
+        runCurrent()
+        assertEquals(second.id, f.vm.state.value.settings.selectedId)
+        assertEquals(1, f.data.writes)
+        assertEquals(2, f.connections.size)
+        assertEquals(ConnectionStatus.CONNECTED, f.vm.state.value.connection.status)
+        assertNull(f.vm.state.value.editor)
+
+        f.networkAllowed = false
+        f.vm.onWindowFocusGained()
+        runCurrent()
+        assertEquals(ConnectionError.PERMISSION_REQUIRED, f.vm.state.value.connection.error)
+        assertTrue(f.connections.all { it.closed })
+        f.networkAllowed = true
+        f.vm.onForeground()
+        f.vm.refreshNetworkPermission()
+        runCurrent()
+        assertEquals(4, f.connections.size)
+        assertEquals(1, f.data.writes)
+        assertEquals(ConnectionStatus.CONNECTED, f.vm.state.value.connection.status)
+    }
+
     @Test fun editingInactiveOrSameEndpointProfileAlwaysActivatesAndReconnectsOnce() = vmTest {
         val f = fixture(listOf(first, second), first.id)
         runCurrent()
@@ -691,20 +750,25 @@ class ServersViewModelTest {
         try { block() } finally { models.clear(); runCurrent() }
     }
 
-    private fun fixture(profiles: List<ServerProfile> = emptyList(), selected: String? = null, stream: LocalStreamController? = null): Fixture {
-        val f = Fixture(profiles, selected, stream)
+    private fun fixture(
+        profiles: List<ServerProfile> = emptyList(), selected: String? = null,
+        stream: LocalStreamController? = null, networkAllowed: Boolean = true,
+    ): Fixture {
+        val f = Fixture(profiles, selected, stream, networkAllowed)
         models.put("model${System.nanoTime()}", f.vm)
         return f
     }
 
-    private class Fixture(profiles: List<ServerProfile>, selected: String?, stream: LocalStreamController?) {
+    private class Fixture(
+        profiles: List<ServerProfile>, selected: String?, stream: LocalStreamController?, var networkAllowed: Boolean,
+    ) {
         val data = MemoryDataStore(mutablePreferencesOf(stringPreferencesKey("server_profiles_v1") to ServerSettingsCodec.encode(profiles)).apply {
             selected?.let { this[stringPreferencesKey("selected_server_id")] = it }
         })
         var connectGate: suspend () -> Unit = {}
         var failure: IOException? = null
         val connections = mutableListOf<FakeConnection>()
-        val vm = ServersViewModel(ServerSettingsStore(data), localStream = stream, connectionFactory = {
+        val vm = ServersViewModel(ServerSettingsStore(data), localStream = stream, networkPermission = { networkAllowed }, connectionFactory = {
             FakeConnection(connectGate, failure).also(connections::add)
         })
     }
@@ -739,6 +803,7 @@ class ServersViewModelTest {
         private val preferences = MutableStateFlow(initial)
         val failReads = MutableStateFlow(false)
         var failWrites = false
+        var writeGate: suspend () -> Unit = {}
         var writes = 0
             private set
         var activeReaders = 0
@@ -757,6 +822,7 @@ class ServersViewModelTest {
         private val mutex = Mutex()
         override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences = mutex.withLock {
             if (failWrites) throw IOException("Write failed")
+            writeGate()
             transform(preferences.value).also { preferences.value = it; writes++ }
         }
     }

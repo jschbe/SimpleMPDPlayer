@@ -161,6 +161,10 @@
     <string name="network_error">Errore di rete. Controlla la connessione e riprova.</string>
     <string name="allow_local_network">Consenti rete locale</string>
     <string name="local_network_permission_required">Per collegarti al server MPD serve l’accesso alla rete locale. Consenti l’accesso oppure abilita « Dispositivi nelle vicinanze » nelle impostazioni dell’app se la richiesta non appare più.</string>
+    <string name="local_network_access_required">Accesso alla rete locale richiesto</string>
+    <string name="local_network_access_explanation">Per collegarti al server MPD serve l’accesso alla rete locale.</string>
+    <string name="local_network_settings_hint">Nelle impostazioni dell’app, consenti « Dispositivi nelle vicinanze ».</string>
+    <string name="open_app_settings">Apri le impostazioni dell’app</string>
     <string name="settings_recovered">Le impostazioni salvate non valide sono state ignorate. Controlla i profili server.</string>
     <string name="settings_read_failed">Impossibile caricare i server salvati. Riprova.</string>
     <string name="settings_save_failed">Impossibile salvare le modifiche. Riprova.</string>

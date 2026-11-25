@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.platform.app.InstrumentationRegistry
 import com.github.jschbe.simplempdplayer.R
+import com.github.jschbe.simplempdplayer.ServerEditor
 import com.github.jschbe.simplempdplayer.ServersUiState
 import com.github.jschbe.simplempdplayer.data.*
 import com.github.jschbe.simplempdplayer.mpd.*
@@ -100,6 +101,8 @@ class LocalizedLayoutTest {
         val mode = mutableStateOf(ThemeMode.SYSTEM)
         val context = compose.activity
         val connection = mutableStateOf(ConnectionState(ConnectionStatus.FAILED, error = ConnectionError.PERMISSION_REQUIRED))
+        val networkAllowed = mutableStateOf(true)
+        val canRequestNetworkAccess = mutableStateOf(true)
         compose.activityRule.scenario.onActivity { it.setShowWhenLocked(true); it.setTurnScreenOn(true) }
         fun configuration() = Configuration(context.resources.configuration).apply { setLocale(Locale.forLanguageTag(tag.value)) }
         compose.setContent {
@@ -108,7 +111,10 @@ class LocalizedLayoutTest {
             CompositionLocalProvider(LocalResources provides localized.resources,
                 LocalDensity provides Density(density.density, 2f)) {
                 SimpleMPDPlayerTheme(mode = mode.value) {
-                    Box(Modifier.width(300.dp)) { ConnectionStatusRow(connection.value, true, {}, {}) }
+                    Box(Modifier.width(300.dp)) {
+                        ConnectionStatusRow(connection.value, true, {}, {},
+                            networkAllowed = networkAllowed.value, canRequestNetworkAccess = canRequestNetworkAccess.value)
+                    }
                 }
             }
         }
@@ -116,12 +122,12 @@ class LocalizedLayoutTest {
             compose.runOnIdle {
                 tag.value = language
                 mode.value = ThemeMode.entries[index % ThemeMode.entries.size]
+                networkAllowed.value = true
+                canRequestNetworkAccess.value = true
             }
             val resources = context.createConfigurationContext(configuration()).resources
-            for ((error, action) in listOf(ConnectionError.PERMISSION_REQUIRED to R.string.allow_local_network,
-                ConnectionError.LOST to R.string.reconnect)) {
-                compose.runOnIdle { connection.value = connection.value.copy(error = error) }
-                for (label in listOf(R.string.connection_failed, action)) {
+            fun checkRow(message: Int, action: Int) {
+                for (label in listOf(message, action)) {
                     val node = compose.onNodeWithText(resources.getString(label), useUnmergedTree = true).assertIsDisplayed()
                     val layout = mutableListOf<TextLayoutResult>()
                     node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layout) }
@@ -129,6 +135,55 @@ class LocalizedLayoutTest {
                 }
                 compose.onNodeWithText(resources.getString(action)).assertIsEnabled().assertHasClickAction()
             }
+            for ((error, action) in listOf(ConnectionError.PERMISSION_REQUIRED to R.string.allow_local_network,
+                ConnectionError.LOST to R.string.reconnect)) {
+                compose.runOnIdle { connection.value = connection.value.copy(error = error) }
+                checkRow(R.string.connection_failed, action)
+            }
+            compose.runOnIdle { networkAllowed.value = false }
+            checkRow(R.string.local_network_access_required, R.string.allow_local_network)
+            compose.runOnIdle { canRequestNetworkAccess.value = false }
+            checkRow(R.string.local_network_settings_hint, R.string.open_app_settings)
+        }
+    }
+
+    @Test fun editorPermissionHelpKeepsSettingsReachableAtDoubleFontSize() {
+        val tag = mutableStateOf("en")
+        val context = compose.activity
+        val editor = ServerEditor()
+        val state = ServersUiState(loading = false, networkAllowed = false, editor = editor)
+        var permissionRequests = 0
+        var settingsOpened = 0
+        fun localized(language: String) = context.createConfigurationContext(
+            Configuration(context.resources.configuration).apply { setLocale(Locale.forLanguageTag(language)) },
+        ).resources
+        compose.setContent {
+            val density = LocalDensity.current
+            val resources = remember(tag.value) { localized(tag.value) }
+            CompositionLocalProvider(LocalResources provides resources, LocalDensity provides Density(density.density, 2f)) {
+                SimpleMPDPlayerTheme {
+                    ServerEditorDialog(editor, state, {}, { _, _ -> }, { _, _ -> }, {},
+                        canRequestNetworkAccess = true, onGrantNetworkAccess = { permissionRequests++ },
+                        onOpenNetworkSettings = { settingsOpened++ })
+                }
+            }
+        }
+        val languages = listOf("en", "de", "fr", "it", "es", "uk", "ru")
+        for (language in languages) {
+            compose.runOnIdle { tag.value = language }
+            val resources = localized(language)
+            for (label in listOf(R.string.local_network_access_explanation, R.string.local_network_settings_hint)) {
+                compose.onNodeWithText(resources.getString(label)).performScrollTo().assertIsDisplayed()
+            }
+            compose.onNodeWithText(resources.getString(R.string.allow_local_network))
+                .performScrollTo().assertIsDisplayed().performClick()
+            compose.onNodeWithText(resources.getString(R.string.open_app_settings))
+                .performScrollTo().assertIsDisplayed().performClick()
+            compose.onNodeWithText(resources.getString(R.string.test_connection)).assertIsDisplayed()
+        }
+        compose.runOnIdle {
+            assertEquals(languages.size, permissionRequests)
+            assertEquals(languages.size, settingsOpened)
         }
     }
 

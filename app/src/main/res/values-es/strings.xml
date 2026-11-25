@@ -161,6 +161,10 @@
     <string name="network_error">Error de red. Comprueba la conexión y vuelve a intentarlo.</string>
     <string name="allow_local_network">Permitir red local</string>
     <string name="local_network_permission_required">Se necesita acceso a la red local para conectar con el servidor MPD. Permítelo o activa « Dispositivos cercanos » en los ajustes de la aplicación si ya no aparece el aviso.</string>
+    <string name="local_network_access_required">Se necesita acceso a la red local</string>
+    <string name="local_network_access_explanation">Se necesita acceso a la red local para conectar con el servidor MPD.</string>
+    <string name="local_network_settings_hint">En los ajustes de la aplicación, permite « Dispositivos cercanos ».</string>
+    <string name="open_app_settings">Abrir ajustes de la aplicación</string>
     <string name="settings_recovered">Se ignoraron los ajustes guardados no válidos. Revisa tus perfiles de servidor.</string>
     <string name="settings_read_failed">No se pudieron cargar los servidores guardados. Reinténtalo.</string>
     <string name="settings_save_failed">No se pudieron guardar los cambios. Inténtalo de nuevo.</string>

@@ -29,6 +29,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,9 +44,8 @@ class MainActivity : AppCompatActivity() {
         val app = application as PlayerApplication
         ViewModelProvider(this, viewModelFactory {
             initializer {
-                ServersViewModel(app.serverSettings, networkPermission = {
-                    Build.VERSION.SDK_INT < 37 || app.checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED
-                }, sharedRepository = app.repository, localStream = app.localStream, sleepTimer = app.sleepTimer)
+                ServersViewModel(app.serverSettings, networkPermission = { app.hasLocalNetworkPermission() },
+                    sharedRepository = app.repository, localStream = app.localStream, sleepTimer = app.sleepTimer)
             }
         })[ServersViewModel::class.java]
     }
@@ -123,16 +123,25 @@ class MainActivity : AppCompatActivity() {
                     }
                 } finally { toast?.cancel() }
             }
-            val networkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-                model.refreshNetworkPermission()
-                if (!granted && Build.VERSION.SDK_INT >= 37 &&
+            var requestInFlight by rememberSaveable { mutableStateOf(false) }
+            var requestBlocked by rememberSaveable { mutableStateOf(false) }
+            val networkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+                requestInFlight = false
+                requestBlocked = !hasLocalNetworkPermission() &&
                     !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_LOCAL_NETWORK)
-                ) {
-                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+                model.refreshNetworkPermission()
+            }
+            fun requestLocalNetworkAccess() {
+                model.refreshNetworkPermission()
+                if (!hasLocalNetworkPermission() && !requestInFlight && !requestBlocked) {
+                    requestInFlight = true
+                    networkPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
                 }
             }
             LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
                 model.onForeground(canReturn = hasWindowFocus() && canInteract())
+                if (hasLocalNetworkPermission() ||
+                    shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_LOCAL_NETWORK)) requestBlocked = false
                 // System -> explicit with the same effective locale need not recreate us.
                 language = currentLanguage()
             }
@@ -142,7 +151,10 @@ class MainActivity : AppCompatActivity() {
                     onAdd = { model.openEditor() },
                     onEdit = model::openEditor,
                     onDismissEditor = model::dismissEditor,
-                    onSave = model::save,
+                    onSave = { server, password ->
+                        model.save(server, password)
+                        if (!hasLocalNetworkPermission()) requestLocalNetworkAccess()
+                    },
                     onDelete = model::delete,
                     onSelect = model::select,
                     onReconnect = model::reconnect,
@@ -156,7 +168,10 @@ class MainActivity : AppCompatActivity() {
                     onLoadBrowser = model::loadBrowser,
                     onBrowse = model::browse,
                     onEnqueue = model::enqueue,
-                    onTest = model::test,
+                    onTest = { server, password ->
+                        if (hasLocalNetworkPermission()) model.test(server, password)
+                        else requestLocalNetworkAccess()
+                    },
                     onReorder = model::reorder,
                     onTheme = model::setTheme,
                     language = language,
@@ -167,11 +182,13 @@ class MainActivity : AppCompatActivity() {
                     onTrackInfoExpanded = model::setTrackInfoExpanded,
                     onReload = model::reloadSettings,
                     onGrantNetworkAccess = {
-                        if (Build.VERSION.SDK_INT >= 37 &&
-                            checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
-                        ) {
-                            networkPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
-                        } else model.reconnect()
+                        if (hasLocalNetworkPermission() && state.networkAllowed) model.reconnect()
+                        else requestLocalNetworkAccess()
+                    },
+                    canRequestNetworkAccess = !requestBlocked,
+                    onOpenNetworkSettings = {
+                        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", packageName, null)))
                     },
                 )
             }
@@ -180,3 +197,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun currentLanguage() = AppLanguage.fromTags(AppCompatDelegate.getApplicationLocales().toLanguageTags())
 }
+
+private fun Context.hasLocalNetworkPermission() = Build.VERSION.SDK_INT < 37 ||
+    checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED

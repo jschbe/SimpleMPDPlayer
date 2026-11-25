@@ -47,6 +47,7 @@ data class ServersUiState(
     val localStream: StreamState = StreamState(),
     val sleepTimer: SleepTimerState = SleepTimerState(),
     val sessionServer: ServerProfile? = null,
+    val networkAllowed: Boolean = true,
 ) {
     val settingsEditable: Boolean get() = !loading && !saving && !settings.readFailed
 
@@ -65,14 +66,19 @@ class ServersViewModel(
     private val nanoTime: () -> Long = System::nanoTime,
 ) : ViewModel() {
     private val repository = sharedRepository ?: MpdRepository(viewModelScope, connectionFactory)
-    private val mutableState = MutableStateFlow(ServersUiState(sessionServer = repository.activeServer))
+    private val mutableState = MutableStateFlow(
+        ServersUiState(sessionServer = repository.activeServer, networkAllowed = networkPermission())
+    )
     val state = mutableState.asStateFlow()
     private val mutableNotices = MutableSharedFlow<UiNotice>(extraBufferCapacity = 4)
     val notices = mutableNotices.asSharedFlow()
     private var settingsJob: Job? = null
     private var testJob: Job? = null
     private var foregroundCheckJob: Job? = null
-    private var networkAllowed = networkPermission()
+    private var desiredNetworkAllowed = repository.state.value.let {
+        // A policy-blocked selection has no socket failure source.
+        it.error != ConnectionError.PERMISSION_REQUIRED || it.failureSource != null
+    }
     private var desiredEndpoint = repository.activeServer?.endpoint()
     private var writingSettings = false
     private var wasEmpty: Boolean? = null
@@ -175,7 +181,8 @@ class ServersViewModel(
     private fun synchronizeConnection() {
         if (!state.value.settingsEditable) return
         val selected = mutableState.value.activeServer
-        if (desiredEndpoint != selected?.endpoint()) connect(selected)
+        if (desiredEndpoint != selected?.endpoint() ||
+            (selected != null && desiredNetworkAllowed != state.value.networkAllowed)) connect(selected)
     }
 
     fun openEditor(server: ServerProfile? = null) {
@@ -305,6 +312,7 @@ class ServersViewModel(
     }
 
     fun onWindowFocusGained(canReturn: Boolean = false) {
+        refreshNetworkPermission()
         if (!canReturn || !onVisibleReturn()) requestConnectionCheck(ConnectionCheckTrigger.WINDOW_FOCUS)
     }
 
@@ -361,9 +369,22 @@ class ServersViewModel(
 
     fun refreshNetworkPermission() {
         val allowed = networkPermission()
-        if (networkAllowed != allowed) {
-            networkAllowed = allowed
-            reconnect()
+        if (state.value.networkAllowed == allowed) return
+        updateNetworkPermission(allowed)
+        // A successful Save connects its own committed selection. A grant during the write
+        // must not start the previous selection, while a revoked grant closes it immediately.
+        if (allowed && writingSettings) return
+        invalidateNotices()
+        connect(state.value.activeServer)
+    }
+
+    private fun updateNetworkPermission(allowed: Boolean) {
+        mutableState.update { current ->
+            val editor = current.editor
+            current.copy(networkAllowed = allowed, editor =
+                if (allowed && !current.networkAllowed && editor?.testError == ConnectionError.PERMISSION_REQUIRED) {
+                    editor.copy(testError = null)
+                } else editor)
         }
     }
 
@@ -372,8 +393,9 @@ class ServersViewModel(
         localStream?.disable()
         desiredEndpoint = server?.endpoint()
         pendingConnectionNotice = notifyToken
-        networkAllowed = networkPermission()
-        repository.connect(server, networkAllowed)
+        desiredNetworkAllowed = networkPermission()
+        updateNetworkPermission(desiredNetworkAllowed)
+        repository.connect(server, desiredNetworkAllowed)
     }
 
     override fun onCleared() {

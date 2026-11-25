@@ -59,9 +59,10 @@ tunnel. Local credential encryption does not protect network traffic.
   automatic reconnection attempts while offline.
 - `ACCESS_LOCAL_NETWORK` allows connections to local MPD servers and HTTP audio
   endpoints. Android 17 (API 37) and later require a runtime permission for
-  this access. If Android has not granted it, choose **Allow local network**
-  in the app to open the system permission dialog. The app does not request
-  separate local network approval on Android 16 or earlier.
+  this access. The app can request it when you choose **Test**, **Save** or
+  **Allow local network**. **Open app settings** lets you enable **Nearby
+  devices** directly from the app. The app does not request separate local
+  network approval on Android 16 or earlier.
 - `WAKE_LOCK` helps the audio player keep the device and network available
   while you listen, including when the screen is off.
 - `FOREGROUND_SERVICE` allows the app to run its listening service when you

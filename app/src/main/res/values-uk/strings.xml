@@ -162,6 +162,10 @@
     <string name="network_error">Помилка мережі. Перевірте з’єднання та повторіть спробу.</string>
     <string name="allow_local_network">Дозволити локальну мережу</string>
     <string name="local_network_permission_required">Для з’єднання із сервером MPD потрібен доступ до локальної мережі. Дозвольте доступ або ввімкніть «Пристрої поблизу» в налаштуваннях застосунку, якщо запит більше не з’являється.</string>
+    <string name="local_network_access_required">Потрібен доступ до локальної мережі</string>
+    <string name="local_network_access_explanation">Для з’єднання із сервером MPD потрібен доступ до локальної мережі.</string>
+    <string name="local_network_settings_hint">У налаштуваннях застосунку дозвольте доступ до «Пристроїв поблизу».</string>
+    <string name="open_app_settings">Відкрити налаштування застосунку</string>
     <string name="settings_recovered">Некоректні збережені налаштування проігноровано. Перевірте профілі серверів.</string>
     <string name="settings_read_failed">Не вдалося завантажити збережені сервери. Повторіть спробу.</string>
     <string name="settings_save_failed">Не вдалося зберегти зміни. Спробуйте ще раз.</string>

@@ -302,6 +302,16 @@ use Android's exemption from notification runtime permission. The network
 security configuration permits cleartext HTTP for arbitrary profile hosts.
 See the [user guide](USER_GUIDE.md#connect-to-mpd) for network precautions.
 
+On Android 17+, validated Test and Save actions can request local network
+access. Test waits for another explicit tap after grant. Save commits the
+profile once even if permission is denied. A grant while a settings write
+is active waits for the committed selection, avoiding a connection to the
+previous selection. Resume and focus recheck permission, reconnect the saved
+selection after grant and close sessions on revocation. The editor offers
+an explicit App Settings route for Nearby devices. A denial never launches
+settings or automatically prompts again. This permission state is separate
+from MPD authentication and authorization.
+
 `AppCompatDelegate.setApplicationLocales` and Android own app language.
 On API 31/32 AppCompat auto-stores the override, including a small blocking
 preferences read. API 33+ uses platform storage. The picker also reads

@@ -159,6 +159,10 @@
     <string name="network_error">Network error. Check your connection and try again.</string>
     <string name="allow_local_network">Allow local network</string>
     <string name="local_network_permission_required">Local network access is required to connect to your MPD server. Allow access, or enable Nearby devices in app settings if the permission prompt no longer appears.</string>
+    <string name="local_network_access_required">Local network access required</string>
+    <string name="local_network_access_explanation">Local network access is required to connect to your MPD server.</string>
+    <string name="local_network_settings_hint">In app settings, enable Nearby devices.</string>
+    <string name="open_app_settings">Open app settings</string>
     <string name="settings_recovered">Invalid saved settings were ignored. Review your server profiles.</string>
     <string name="settings_read_failed">Could not load saved servers. Retry to load them again.</string>
     <string name="settings_save_failed">Could not save changes. Please try again.</string>

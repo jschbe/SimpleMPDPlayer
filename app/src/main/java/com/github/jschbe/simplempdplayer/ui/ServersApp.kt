@@ -58,6 +58,8 @@ fun ServersApp(
     onLanguage: (AppLanguage) -> Unit = {},
     onQueueAction: (PlayerAction.QueueAction, QueueActionContext) -> Unit = { _, _ -> },
     onRetryQueue: (Long) -> Unit = {},
+    canRequestNetworkAccess: Boolean = true,
+    onOpenNetworkSettings: () -> Unit = {},
 ) {
     val pager = rememberPagerState(initialPage = 1, pageCount = { 3 })
     val scope = rememberCoroutineScope()
@@ -135,6 +137,11 @@ fun ServersApp(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (showServers) {
+                if (!state.networkAllowed && state.activeServer != null) {
+                    ConnectionStatusRow(state.connection, true, onReconnect, onGrantNetworkAccess,
+                        networkAllowed = false, canRequestNetworkAccess = canRequestNetworkAccess,
+                        onOpenNetworkSettings = onOpenNetworkSettings)
+                }
                 ServerManagement(state, onEdit, onDelete, {
                     onSelect(it)
                     showServers = false
@@ -142,7 +149,9 @@ fun ServersApp(
                 }, onReload, onReorder)
             } else {
                 ConnectionStatusRow(state.connection, state.activeServer != null, onReconnect, onGrantNetworkAccess,
-                    onEditServer = state.activeServer?.takeIf { state.settingsEditable }?.let { server -> { onEdit(server) } })
+                    onEditServer = state.activeServer?.takeIf { state.settingsEditable }?.let { server -> { onEdit(server) } },
+                    networkAllowed = state.networkAllowed, canRequestNetworkAccess = canRequestNetworkAccess,
+                    onOpenNetworkSettings = onOpenNetworkSettings)
                 if (state.settings.readFailed && state.activeServer == null) {
                     Column(Modifier.padding(horizontal = 16.dp)) { SettingsReadError(state.loading, onReload) }
                 }
@@ -174,7 +183,10 @@ fun ServersApp(
         }
     }
     state.editor?.let { editor ->
-        key(editor.token) { ServerEditorDialog(editor, state, onDismissEditor, onSave, onTest, onReload) }
+        key(editor.token) {
+            ServerEditorDialog(editor, state, onDismissEditor, onSave, onTest, onReload,
+                canRequestNetworkAccess, onGrantNetworkAccess, onOpenNetworkSettings)
+        }
     }
     if (sleepTimer) {
         SleepTimerDialog(state.sleepTimer, state.activeServer?.name, !state.settingsEditable,
@@ -217,14 +229,21 @@ internal fun ConnectionStatusRow(
     onReconnect: () -> Unit,
     onGrantNetworkAccess: () -> Unit,
     onEditServer: (() -> Unit)? = null,
+    networkAllowed: Boolean = true,
+    canRequestNetworkAccess: Boolean = true,
+    onOpenNetworkSettings: () -> Unit = {},
 ) {
-    val permissionRequired = connection.error == ConnectionError.PERMISSION_REQUIRED
+    val permissionMissing = hasServer && !networkAllowed
+    val permissionRequired = permissionMissing || connection.error == ConnectionError.PERMISSION_REQUIRED
+    val settingsRequired = permissionMissing && !canRequestNetworkAccess
     val busy = !permissionRequired && !connection.retriesExhausted &&
         (connection.recovering || connection.status == ConnectionStatus.CONNECTING)
     val failed = permissionRequired || connection.retriesExhausted || (!busy &&
         (connection.status == ConnectionStatus.FAILED || connection.error != null))
     val accessLabel = connection.error?.accessStatusLabel()
     val label = when {
+        settingsRequired -> R.string.local_network_settings_hint
+        permissionMissing -> R.string.local_network_access_required
         accessLabel != null && failed -> accessLabel
         failed -> R.string.connection_failed
         connection.waitingForNetwork -> R.string.connection_waiting_network
@@ -244,8 +263,13 @@ internal fun ConnectionStatusRow(
         if (permissionRequired || (failed && hasServer)) {
             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                 val edit = onEditServer?.takeIf { accessLabel != null }
-                TextButton(onClick = if (permissionRequired) onGrantNetworkAccess else edit ?: onReconnect) {
+                TextButton(onClick = when {
+                    settingsRequired -> onOpenNetworkSettings
+                    permissionRequired -> onGrantNetworkAccess
+                    else -> edit ?: onReconnect
+                }) {
                     Text(stringResource(when {
+                        settingsRequired -> R.string.open_app_settings
                         permissionRequired -> R.string.allow_local_network
                         edit != null -> R.string.edit_server
                         else -> R.string.reconnect

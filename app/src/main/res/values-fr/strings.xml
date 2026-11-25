@@ -161,6 +161,10 @@
     <string name="network_error">Erreur réseau. Vérifiez votre connexion et réessayez.</string>
     <string name="allow_local_network">Autoriser le réseau local</string>
     <string name="local_network_permission_required">L’accès au réseau local est nécessaire pour se connecter à votre serveur MPD. Autorisez cet accès ou activez « Appareils à proximité » dans les paramètres de l’application si la demande n’apparaît plus.</string>
+    <string name="local_network_access_required">Accès au réseau local requis</string>
+    <string name="local_network_access_explanation">L’accès au réseau local est nécessaire pour se connecter à votre serveur MPD.</string>
+    <string name="local_network_settings_hint">Dans les paramètres de l’application, autorisez « Appareils à proximité ».</string>
+    <string name="open_app_settings">Ouvrir les paramètres de l’application</string>
     <string name="settings_recovered">Les paramètres enregistrés invalides ont été ignorés. Vérifiez vos profils de serveur.</string>
     <string name="settings_read_failed">Impossible de charger les serveurs enregistrés. Réessayez.</string>
     <string name="settings_save_failed">Impossible d’enregistrer les modifications. Veuillez réessayer.</string>

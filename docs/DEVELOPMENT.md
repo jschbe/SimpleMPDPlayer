@@ -13,8 +13,12 @@ repository root.
   run the build directly. The daemon criteria also request JDK 25 and support
   provisioning through Foojay. Java source and target compatibility are 11.
 - For device tests, install the Android Emulator and create an AVD. API 36
-  Medium Phone was the reference AVD for recent suites. The app's runtime
-  minimum is API 31.
+  Medium Phone is the older-Android reference. **Medium Phone API 37**
+  (`medium_phone_api_37`) is the permanent Android 17 reference AVD on the NUC.
+  It uses the official Google APIs x86_64 image
+  (`system-images;android-37.0;google_apis;x86_64`) and the Medium Phone
+  hardware profile with KVM acceleration. Use one emulator at a time and retain
+  both AVDs. The app's runtime minimum is API 31.
 - The wrapper pins Gradle 9.6.0 with a distribution checksum. AGP, Kotlin,
   Compose, Media3 and other dependency versions are managed in the
   [version catalog](../gradle/libs.versions.toml). Keep stable releases and
@@ -33,9 +37,10 @@ on the separate test variant below.
 
 ## Sign and verify the Play release
 
-Version `1.0.0` uses version code `1`, assuming that code is still unused
-for `com.github.jschbe.simplempdplayer` in Play Console. Confirm it before
-uploading. The build uses minimum SDK 31 and compile/target SDK 37.
+Version `1.0.1` uses version code `2` for `com.github.jschbe.simplempdplayer`,
+following the published version `1.0.0` with code `1`. Confirm the next code
+in Play Console before uploading. The build uses minimum SDK 31 and
+compile/target SDK 37.
 
 Release artifact generation requires all four upload-signing variables. Use a
 separate Bash shell and disable the Gradle daemon and configuration cache. The release

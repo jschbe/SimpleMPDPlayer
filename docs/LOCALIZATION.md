@@ -4,7 +4,7 @@
 
 The app supports en/de/fr/it/es/uk/ru, with complete unqualified English
 fallback and six translations. There are now
-**228 strings and one plural name (229 names / 230 English CSV rows)**.
+**232 strings and one plural name (233 names / 234 English CSV rows)**.
 `strings-en.csv` remains the canonical English review catalog. The language,
 About and legal-navigation strings and the six queue and response-limit strings
 include review context. The six queue and limit strings are available in all

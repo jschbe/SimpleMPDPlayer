@@ -4,6 +4,8 @@ SimpleMPDPlayer is a minimalist Android client for Music Player Daemon (MPD)
 with optional local HTTP audio reception. MPD owns playback and the queue.
 To hear the server's audio on your phone, turn on **Listen on phone** in Player.
 
+[Download on Google Play](https://play.google.com/store/apps/details?id=com.github.jschbe.simplempdplayer)
+
 ## Features
 
 - Save and switch between MPD server profiles with optional password
@@ -46,7 +48,7 @@ transit. Use a trusted network or a separately configured secure tunnel.
 The source can be built and installed locally as a debug APK. See
 [development](docs/DEVELOPMENT.md#build-and-install-locally) for the SDK,
 Gradle commands and local installation instructions. Maintainers can also
-[build and sign the 1.0.0 bundle](docs/DEVELOPMENT.md#sign-and-verify-the-play-release).
+[build and sign the 1.0.1 bundle](docs/DEVELOPMENT.md#sign-and-verify-the-play-release).
 
 ## Documentation
 

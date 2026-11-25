@@ -160,6 +160,10 @@
     <string name="network_error">Netzwerkfehler. Prüfe deine Verbindung und versuche es erneut.</string>
     <string name="allow_local_network">Lokales Netzwerk erlauben</string>
     <string name="local_network_permission_required">Für die Verbindung zum MPD-Server ist der Zugriff auf das lokale Netzwerk erforderlich. Erlaube den Zugriff oder aktiviere „Geräte in der Nähe“ in den App-Einstellungen, falls die Berechtigungsabfrage nicht mehr erscheint.</string>
+    <string name="local_network_access_required">Lokaler Netzwerkzugriff erforderlich</string>
+    <string name="local_network_access_explanation">Die Verbindung zu deinem MPD-Server benötigt Zugriff auf das lokale Netzwerk.</string>
+    <string name="local_network_settings_hint">Aktiviere „Geräte in der Nähe“ in den App-Einstellungen.</string>
+    <string name="open_app_settings">App-Einstellungen öffnen</string>
     <string name="settings_recovered">Ungültige gespeicherte Einstellungen wurden ignoriert. Prüfe deine Serverprofile.</string>
     <string name="settings_read_failed">Gespeicherte Server konnten nicht geladen werden. Versuche es erneut.</string>
     <string name="settings_save_failed">Änderungen konnten nicht gespeichert werden. Bitte erneut versuchen.</string>
