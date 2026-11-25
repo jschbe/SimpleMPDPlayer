@@ -31,6 +31,68 @@ local install, select the intended Android target and run
 This preserves data when Android accepts the update. Keep instrumented tests
 on the separate test variant below.
 
+## Sign and verify the Play release
+
+Version `1.0.0` uses version code `1`, assuming that code is still unused
+for `com.github.jschbe.simplempdplayer` in Play Console. Confirm it before
+uploading. The build uses minimum SDK 31 and compile/target SDK 37.
+
+Release artifact generation requires all four upload-signing variables. Use a
+separate Bash shell and disable the Gradle daemon and configuration cache. The release
+build refuses to load signing inputs when the configuration cache is enabled.
+Debug and `.devicetest` builds work without the upload credentials. Run the
+command below from the repository root after the offline dependencies are
+available. If the cache needs preparation, resolve dependencies before
+entering the password and keep the signing variables unset during that step.
+
+```bash
+(
+  set +x
+  set -e
+  export SIMPLEMPDPLAYER_UPLOAD_STORE_FILE="$HOME/.config/android-signing/play-upload.jks"
+  export SIMPLEMPDPLAYER_UPLOAD_KEY_ALIAS=play-upload
+  IFS= read -rsp 'Upload keystore password: ' SIMPLEMPDPLAYER_UPLOAD_STORE_PASSWORD
+  printf '\n'
+  test -n "$SIMPLEMPDPLAYER_UPLOAD_STORE_PASSWORD"
+  export SIMPLEMPDPLAYER_UPLOAD_STORE_PASSWORD
+  export SIMPLEMPDPLAYER_UPLOAD_KEY_PASSWORD="$SIMPLEMPDPLAYER_UPLOAD_STORE_PASSWORD"
+  ./gradlew --offline --no-daemon --no-configuration-cache :app:clean :app:bundleRelease
+)
+```
+
+The AAB is `app/build/outputs/bundle/release/app-release.aab`. Using the
+official bundletool CLI and the JDK signing tools, verify it in the same
+source checkout:
+
+```bash
+aab=app/build/outputs/bundle/release/app-release.aab
+jarsigner -verify "$aab"
+keytool -printcert -jarfile "$aab"
+keytool -list -v -keystore "$HOME/.config/android-signing/play-upload.jks" -alias play-upload
+bundletool validate --bundle="$aab"
+bundletool dump manifest --bundle="$aab" --module=base
+sha256sum "$aab"
+```
+
+Check that `jarsigner` reports a verified archive. Compare the two SHA-256
+certificate fingerprints and confirm the package, version code and name, and
+SDK levels in the bundle manifest. The bundle is
+signed with the upload certificate. Google Play App Signing uses its separate
+app-signing certificate for distributed APKs. Record the AAB checksum and
+retain the exact corresponding source and build files for the distributed
+binary. Keep the keystore and passwords outside the repository.
+[Android app signing](https://developer.android.com/studio/publish/app-signing)
+[Bundletool](https://developer.android.com/tools/bundletool)
+[Licensing](LICENSING.md)
+
+When checking optimized startup, sign a Release APK with a disposable key and
+install it on a fresh emulator where the production package is absent. Launch
+the main activity with `adb -s "$serial" shell am start -W -n
+com.github.jschbe.simplempdplayer/.MainActivity` and check that the Add server
+dialog opens. Check the crash buffer with `adb -s "$serial" logcat -b crash -d`.
+This exercises the Kotlin sequences hierarchy in the R8 output. The debug and
+`.devicetest` variants do not exercise this release-only regression.
+
 ## Instrumented tests
 
 Use the `deviceTest` build type and its app ID suffix `.devicetest`. Default

@@ -37,7 +37,8 @@ transit. Use a trusted network or a separately configured secure tunnel.
 
 The source can be built and installed locally as a debug APK. See
 [development](docs/DEVELOPMENT.md#build-and-install-locally) for the SDK,
-Gradle commands and local installation instructions.
+Gradle commands and local installation instructions. Maintainers can also
+[build and sign the 1.0.0 bundle](docs/DEVELOPMENT.md#sign-and-verify-the-play-release).
 
 ## Documentation
 

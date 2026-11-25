@@ -5,6 +5,63 @@ These reports record verification by milestone and review package. The
 describe the current implementation, and [development](DEVELOPMENT.md) explains
 how to reproduce available checks.
 
+## G2 release preparation for 1.0.0
+
+On **2026-11-25**, G2 started from clean commit `9761509` with both G1 fixes.
+The release build uses version name `1.0.0`, version code `1`, minimum SDK
+31 and compile/target SDK 37. Version code availability and Production access
+still need confirmation in Play Console.
+
+Debug and `.devicetest` built without signing variables. The JVM suite
+passed **210 tests**, with zero failures or skips. Debug Lint reported
+**0 errors and 20 existing warnings**. The complete Android regression suite
+below is the earlier G1 run. G2 tested the optimized Release APK directly.
+
+Release packaging rejected missing inputs, a request with the configuration
+cache enabled, and an invalid alias. The optimized AAB and APK used only a
+disposable key. Bundletool 1.18.3 validated the AAB, and its manifest
+confirmed the production package, SDKs, version, LAN permission, media
+playback service type, backup and locale configuration, and absence of
+test-only or debuggable flags. The timer receiver and local stream service are
+non-exported. Apart from the launcher, the two exported library components
+require `BLUETOOTH_PRIVILEGED` or `DUMP`. The packaged backup exclusions,
+seven locale declarations, GPL and third-party text were verified. All
+eight native libraries have at least 16 KiB ELF load alignment. APK ZIP
+alignment, AAB alignment metadata and both test signatures passed.
+
+The first optimized APK failed at application startup with
+`IllegalAccessError`. R8 had moved `SequencesKt___SequencesJvmKt` out of
+`kotlin.sequences`, away from its package-private superclass. A
+[release-only keep rule](../app/src/release/keepRules/kotlin-sequences.keep)
+preserves that package name. The final R8 mapping confirmed the hierarchy
+stayed together, with code and resource optimization still enabled.
+
+The disposable-key Release APK was installed on a fresh Medium Phone API 36
+AVD on the NUC. A launch regression check confirmed the initial Add server
+dialog. The release UI rejected the wrong test password, connected after
+saving the correct one, and showed version `1.0.0` and both offline legal
+documents. All seven language options were present, and switching to French
+and back to English took effect.
+
+The isolated loopback daemon was MPD **0.24.4** (protocol greeting
+`0.24.0`), run from temporary Debian packages without installing a system
+service. Direct protocol checks covered denied guest read/control, wrong
+password, allowed read and denied Pause for a read-only role, and allowed
+Play, Pause and idle notifications for an authenticated control role.
+The Release APK sent Play, prepared the daemon's real HTTP stream and
+registered its Android media session. Its one-minute inexact AlarmManager
+timer authenticated, paused the same daemon, and displayed the acknowledged
+result. The corrected Release build produced no fatal app crash in these
+checks. The daemon and the temporary emulator were stopped, and the
+disposable key and signed artifacts were removed.
+
+API 31 and 37 system images were unavailable. API 37 LAN permission
+grant/denial and API 31 runtime are unverified here. The 16 KiB checks were
+artifact inspection. Actual Android cloud backup/transfer restore, OEM
+power-saving behavior, physical audio routing and audible playback remain
+outside this run. Real-key signing and final artifact verification are
+separate steps.
+
 ## G1 credential deadline and alarm startup
 
 On **2026-11-25**, the G1-01 and G1-02 changes were tested from review base

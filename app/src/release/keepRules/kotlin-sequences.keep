@@ -1,0 +1,3 @@
+# Kotlin's sequence facade inherits from package-private classes. Keep the
+# hierarchy in one package under R8 while retaining shrinking and optimization.
+-keeppackagenames kotlin.sequences

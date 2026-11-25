@@ -1,6 +1,48 @@
+import org.gradle.api.configuration.BuildFeatures
+import javax.inject.Inject
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+abstract class SigningBuildFeatures @Inject constructor(val features: BuildFeatures)
+
+val uploadSigningVariables = listOf(
+    "SIMPLEMPDPLAYER_UPLOAD_STORE_FILE",
+    "SIMPLEMPDPLAYER_UPLOAD_STORE_PASSWORD",
+    "SIMPLEMPDPLAYER_UPLOAD_KEY_ALIAS",
+    "SIMPLEMPDPLAYER_UPLOAD_KEY_PASSWORD",
+)
+val configurationCacheRequested = objects.newInstance<SigningBuildFeatures>()
+    .features.configurationCache.requested.getOrElse(false)
+// AGP needs the signing values during configuration. Never load them into a cached build.
+val uploadSigningValues = if (configurationCacheRequested) emptyMap() else
+    uploadSigningVariables.associateWith { providers.environmentVariable(it).orNull?.takeIf(String::isNotEmpty) }
+val missingSigningVariables = uploadSigningVariables.filter { uploadSigningValues[it] == null }
+val releaseSigningError = when {
+    configurationCacheRequested -> "Release signing requires --no-configuration-cache. Use --no-daemon as well."
+    missingSigningVariables.isNotEmpty() -> "Missing release signing inputs: ${missingSigningVariables.joinToString()}"
+    else -> null
+}
+
+abstract class CheckReleaseSigningInputs : DefaultTask() {
+    @get:Input @get:Optional abstract val errorMessage: Property<String>
+
+    @TaskAction fun checkInputs() {
+        errorMessage.orNull?.let { throw GradleException(it) }
+    }
+}
+
+val checkReleaseSigningInputs by tasks.registering(CheckReleaseSigningInputs::class) {
+    errorMessage.set(releaseSigningError)
+}
+
+// Guard artifact production even when an incomplete signing config would otherwise be treated as unsigned.
+tasks.configureEach {
+    if (name in setOf("packageRelease", "packageReleaseBundle", "signReleaseBundle", "validateSigningRelease")) {
+        dependsOn(checkReleaseSigningInputs)
+    }
 }
 
 android {
@@ -14,10 +56,21 @@ android {
         minSdk = 31
         targetSdk = 37
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
         resourceConfigurations += listOf("en", "de", "fr", "it", "es", "uk", "ru")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        create("upload") {
+            if (releaseSigningError == null) {
+                storeFile = file(uploadSigningValues.getValue("SIMPLEMPDPLAYER_UPLOAD_STORE_FILE")!!)
+                storePassword = uploadSigningValues.getValue("SIMPLEMPDPLAYER_UPLOAD_STORE_PASSWORD")
+                keyAlias = uploadSigningValues.getValue("SIMPLEMPDPLAYER_UPLOAD_KEY_ALIAS")
+                keyPassword = uploadSigningValues.getValue("SIMPLEMPDPLAYER_UPLOAD_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -27,6 +80,7 @@ android {
             matchingFallbacks += "debug"
         }
         release {
+            signingConfig = signingConfigs.getByName("upload")
             optimization {
                 enable = true
                 packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
