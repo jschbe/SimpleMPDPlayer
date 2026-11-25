@@ -200,6 +200,7 @@
     <string name="license_bsd">BSD-3-Clause</string>
     <string name="full_license_texts">Textos completos de las licencias y avisos</string>
     <string name="open_source">Abrir repositorio de código</string>
+    <string name="privacy_policy">Política de privacidad</string>
     <string name="license_warranty">Software libre bajo GNU GPL versión 3 o posterior, sin garantía alguna.</string>
     <string name="source_open_failed">No hay un navegador disponible.</string>
     <string name="language_en">English</string>
@@ -211,6 +212,7 @@
     <string name="language_ru">Русский</string>
     <string name="app_license">GPL-3.0-or-later</string>
     <string name="source_repository_url">https://github.com/jschbe/SimpleMPDPlayer</string>
+    <string name="privacy_policy_url">https://github.com/jschbe/SimpleMPDPlayer/blob/main/PRIVACY.md</string>
     <string name="duplicate_server_name">Ya existe un servidor con este nombre.</string>
     <string name="queue_limit">Cola no disponible. Se ha superado el límite de carga.</string>
     <string name="queue_changing">La cola está cambiando. Intenta cargarla de nuevo.</string>

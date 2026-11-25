@@ -185,7 +185,8 @@ for instructions, [architecture](ARCHITECTURE.md) for implementation, and
   [translation reference](LOCALIZATION.md).
 - Persist System default, Light or Dark and keep window icon contrast in sync.
   Provide adaptive, legacy and API 33+ themed launcher resources. About
-  includes the version, source link and offline GPL and third-party notices.
+  includes the version, links to the source repository and privacy policy,
+  and offline GPL and third-party notices.
   Preserve the [licensing and corresponding-source terms](LICENSING.md).
 - Android cloud backup is allowed when encryption capabilities are present.
   Profiles, stable IDs, password-configured markers, selection/order and

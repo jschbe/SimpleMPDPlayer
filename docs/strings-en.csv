@@ -195,8 +195,9 @@ license_kotlin,"Apache-2.0, BSD-3-Clause, BSL-1.0",SPDX license identifiers in t
 license_bsd,BSD-3-Clause,SPDX license identifiers in the overview. Preserve the identifiers exactly.
 full_license_texts,Full license texts and notices,Action and title for the complete offline third-party license texts and notices.
 open_source,Open source repository,Open the public project source repository in a browser.
+privacy_policy,Privacy policy,About action opening the app’s published privacy policy.
 license_warranty,"Free software under GNU GPL version 3 or later, without any warranty.","App license grant summary: GPL version 3 or later, no warranty. Does not replace the full license."
-source_open_failed,No browser available.,No app can open the repository URL.
+source_open_failed,No browser available.,No app can open the selected About link.
 language_en,English,Native language name in the app language selector. Keep this autonym unchanged in every catalog.
 language_de,Deutsch,Native language name in the app language selector. Keep this autonym unchanged in every catalog.
 language_fr,Français,Native language name in the app language selector. Keep this autonym unchanged in every catalog.
@@ -206,6 +207,7 @@ language_uk,Українська,Native language name in the app language select
 language_ru,Русский,Native language name in the app language selector. Keep this autonym unchanged in every catalog.
 app_license,GPL-3.0-or-later,Exact SPDX license identifier; retain GPL-3.0-or-later unchanged.
 source_repository_url,https://github.com/jschbe/SimpleMPDPlayer,Destination of the source repository action. Keep the URL unchanged.
+privacy_policy_url,https://github.com/jschbe/SimpleMPDPlayer/blob/main/PRIVACY.md,Destination of the privacy policy action. Keep the URL unchanged.
 queue_limit,Queue unavailable. It exceeds the loading limit.,Queue tab when queue data cannot fit the bounded load.
 queue_changing,Queue is changing. Try loading it again.,Queue tab after repeated changes during loading.
 queue_changed_action,The queue changed. Check it and try again.,A displayed queue changed before a checked action could run.

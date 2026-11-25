@@ -5,6 +5,21 @@ These reports record verification by milestone and review package. The
 describe the current implementation, and [development](DEVELOPMENT.md) explains
 how to reproduce available checks.
 
+## Privacy policy integration
+
+On **2026-11-25**, the Debug and device-test APKs built successfully,
+**210 JVM tests** passed, and Lint reported **0 errors and 11 existing warnings**.
+The [privacy policy](../PRIVACY.md) covers all six app-declared permissions.
+The Android 17 runtime permission description was checked against the
+existing permission gate and Android documentation.
+
+The offline Medium Phone API 36 `.devicetest` run passed **9 focused Compose
+tests** with no failures or skips. The tests checked both About link destinations
+through intercepted browser intents, existing offline license navigation, and
+the action layout in all seven languages and both themes. One separate layout
+test also passed at 200% Android font size. The published GitHub policy URL
+returned HTTP 200 in a host check.
+
 ## Browser right-swipe navigation
 
 On **2026-11-25**, Debug and the isolated test APKs built successfully. All

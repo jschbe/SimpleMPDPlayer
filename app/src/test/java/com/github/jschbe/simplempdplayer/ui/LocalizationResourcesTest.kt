@@ -38,6 +38,9 @@ class LocalizationResourcesTest {
             val quantities = children(localized.getValue("timer_duration_minutes")).map { it.getAttribute("quantity") }.toSet()
             assertTrue(tag, quantities.containsAll(if (tag in listOf("ru", "uk")) setOf("one", "few", "many", "other") else setOf("one", "other")))
             assertEquals("SimpleMPDPlayer", localized.getValue("app_name").textContent)
+            assertEquals("$tag privacy policy link",
+                "https://github.com/jschbe/SimpleMPDPlayer/blob/main/PRIVACY.md",
+                localized.getValue("privacy_policy_url").textContent)
             assertTrue(localized.getValue("timer_minutes_error").textContent.contains("1440"))
             assertTrue(localized.getValue("timer_minutes_error").textContent.contains("1"))
         }

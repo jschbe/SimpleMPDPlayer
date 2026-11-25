@@ -174,8 +174,11 @@ class LocalizationUiTest {
         compose.onNodeWithText("About").assertIsDisplayed()
     }
 
-    @Test fun aboutOpensTheSourceRepositoryWithoutDisplayingTheAddress() {
-        val repository = "https://github.com/jschbe/SimpleMPDPlayer"
+    @Test fun aboutOpensExternalLinksWithoutDisplayingTheirAddresses() {
+        val links = listOf(
+            R.string.open_source to "https://github.com/jschbe/SimpleMPDPlayer",
+            R.string.privacy_policy to "https://github.com/jschbe/SimpleMPDPlayer/blob/main/PRIVACY.md",
+        )
         val opened = AtomicReference<String>()
         val monitor = object : Instrumentation.ActivityMonitor() {
             override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
@@ -187,10 +190,13 @@ class LocalizationUiTest {
         instrumentation.addMonitor(monitor)
         try {
             open(R.string.about)
-            compose.onNodeWithText(repository, substring = true).assertDoesNotExist()
-            compose.onNodeWithText(text(R.string.open_source)).performScrollTo().performClick()
-            assertEquals(repository, opened.get())
-            compose.onNodeWithText(text(R.string.about)).assertIsDisplayed()
+            for ((label, address) in links) {
+                compose.onNodeWithText(address, substring = true).assertDoesNotExist()
+                opened.set(null)
+                compose.onNodeWithText(text(label)).performScrollTo().performClick()
+                assertEquals(address, opened.get())
+                compose.onNodeWithText(text(R.string.about)).assertIsDisplayed()
+            }
         } finally {
             instrumentation.removeMonitor(monitor)
         }

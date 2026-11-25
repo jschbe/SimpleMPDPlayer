@@ -36,12 +36,14 @@ precise location.
 
 ## Network communication and security
 
-The app communicates with the MPD servers and HTTP audio endpoints you
-configure. It sends playback and library commands, including your MPD password
-if configured, to the selected server. A sleep timer may send a pause command
-to its original target server in the background. Your server and network
-operators may process connection information, such as your IP address, and
-retain logs according to their own policies and configuration.
+The app sends playback and library commands to the selected MPD server. Testing
+a profile can connect to the endpoint entered in the editor before saving.
+A sleep timer may connect to its original target server in the background to
+send Pause. The app uses an MPD password only to authenticate an MPD connection.
+When you enable listening on your device, the app requests audio from the
+configured HTTP endpoint and may follow redirects to another HTTP URL. Your
+server and network operators may process connection information, such as your
+IP address, and retain logs according to their own policies and configuration.
 
 MPD passwords are encrypted on the device using AES-GCM and Android Keystore.
 Ordinary MPD connections and HTTP audio streams are not encrypted in transit;
@@ -49,10 +51,23 @@ MPD passwords are transmitted in cleartext and the app does not authenticate
 server identities. Use a trusted network or a separately configured secure
 tunnel. Local credential encryption does not protect network traffic.
 
-The app uses Android network access and network state permissions for server
-communication, including local network access where required by Android.
-Foreground media playback and wake lock permissions support audio reception
-and playback. These permissions are not used for tracking.
+## Android permissions
+
+- `INTERNET` allows the app to connect to MPD servers and receive optional HTTP
+  audio.
+- `ACCESS_NETWORK_STATE` lets the app detect network availability and pause
+  automatic reconnection attempts while offline.
+- `ACCESS_LOCAL_NETWORK` allows connections to local MPD servers and HTTP audio
+  endpoints. Android 17 (API 37) and later require a runtime permission for
+  this access. If Android has not granted it, choose **Allow local network**
+  in the app to open the system permission dialog. The app does not request
+  separate local network approval on Android 16 or earlier.
+- `WAKE_LOCK` helps the audio player keep the device and network available
+  while you listen, including when the screen is off.
+- `FOREGROUND_SERVICE` allows the app to run its listening service when you
+  turn on **Listen on phone**.
+- `FOREGROUND_SERVICE_MEDIA_PLAYBACK` allows the listening service to keep
+  playing audio while you use another app or turn off the screen.
 
 ## Android backup and device transfer
 
@@ -84,10 +99,11 @@ is necessary because the app does not create accounts.
 
 ## External services
 
-Opening the source repository or another external link in your browser is
-optional. The destination website, including GitHub, handles that visit under
-its own privacy policy. Google Play and Android system services may process data
-independently of the app under their applicable privacy policies.
+Opening **Privacy policy** or **Open source repository** from About opens
+GitHub using Android's link handler, typically your browser. GitHub handles
+that visit under its own privacy policy. Google Play and Android system
+services may process data independently of the app under their applicable
+privacy policies.
 
 ## Contact and changes
 

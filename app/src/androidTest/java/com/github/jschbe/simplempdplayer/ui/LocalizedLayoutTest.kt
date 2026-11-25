@@ -60,7 +60,8 @@ class LocalizedLayoutTest {
                 fun visibleText(text: String) = compose.onNodeWithText(text, useUnmergedTree = true)
                     .performScrollTo().assertIsDisplayed()
                 val left = visibleText(label(R.string.app_license)).getUnclippedBoundsInRoot().left.value
-                for (id in listOf(R.string.gpl_license_link, R.string.third_party_licenses, R.string.open_source)) {
+                for (id in listOf(R.string.gpl_license_link, R.string.third_party_licenses,
+                    R.string.open_source, R.string.privacy_policy)) {
                     val button = compose.onNodeWithText(label(id)).performScrollTo().assertIsDisplayed().assertHasClickAction()
                     val bounds = button.getUnclippedBoundsInRoot()
                     assertTrue("$language/$mode/$id touch height", bounds.bottom - bounds.top >= 48.dp)

@@ -43,6 +43,7 @@ Gradle commands and local installation instructions. Maintainers can also
 ## Documentation
 
 - [User guide](docs/USER_GUIDE.md)
+- [Privacy policy](PRIVACY.md)
 - [Development and testing](docs/DEVELOPMENT.md)
 - [Implemented requirements](docs/REQUIREMENTS.md) and [architecture](docs/ARCHITECTURE.md)
 - [Verification history and limits](docs/VERIFICATION.md)

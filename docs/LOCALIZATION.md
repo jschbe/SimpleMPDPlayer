@@ -4,7 +4,7 @@
 
 The app supports en/de/fr/it/es/uk/ru, with complete unqualified English
 fallback and six translations. There are now
-**226 strings and one plural name (227 names / 228 English CSV rows)**.
+**228 strings and one plural name (229 names / 230 English CSV rows)**.
 `strings-en.csv` remains the canonical English review catalog. The language,
 About and legal-navigation strings and the six queue and response-limit strings
 include review context. The six queue and limit strings are available in all
@@ -38,9 +38,10 @@ restarting HTTP/ExoPlayer/session. Android and Media3 still own stock/accessibil
 notification controls; OS/OEM presentation can follow the system locale.
 
 About supplies localized navigation to the build version, GPL-3.0-or-later,
-complete offline GPL, a third-party license overview and the public source
-repository action. The overview preserves library names and SPDX identifiers
-and links to the full offline notices. Original legal texts stay in English.
+complete offline GPL, a third-party license overview and links to the public
+source repository and privacy policy. The overview preserves library names
+and SPDX identifiers and links to the full offline notices. Original legal
+texts stay in English.
 See [license audit](LICENSING.md).
 
 See [localization verification](VERIFICATION.md#m72-localization-and-licensing)

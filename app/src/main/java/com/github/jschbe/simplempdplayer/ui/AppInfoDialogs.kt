@@ -92,8 +92,6 @@ private enum class AboutPage { ABOUT, THIRD_PARTY, GPL_TEXT, THIRD_PARTY_TEXT }
 
 @Composable
 private fun AboutOverview(onGpl: () -> Unit, onThirdParty: () -> Unit, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val source = stringResource(R.string.source_repository_url)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.about)) },
@@ -108,17 +106,25 @@ private fun AboutOverview(onGpl: () -> Unit, onThirdParty: () -> Unit, onDismiss
                 Spacer(Modifier.height(4.dp))
                 LicenseAction(R.string.gpl_license_link, onGpl)
                 LicenseAction(R.string.third_party_licenses, onThirdParty)
-                LicenseAction(R.string.open_source) {
-                    try {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, source.toUri()))
-                    } catch (_: ActivityNotFoundException) {
-                        Toast.makeText(context, R.string.source_open_failed, Toast.LENGTH_SHORT).show()
-                    }
-                }
+                AboutBrowserLink(R.string.open_source, R.string.source_repository_url)
+                AboutBrowserLink(R.string.privacy_policy, R.string.privacy_policy_url)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.done)) } },
     )
+}
+
+@Composable
+private fun AboutBrowserLink(@StringRes label: Int, @StringRes destination: Int) {
+    val context = LocalContext.current
+    val url = stringResource(destination)
+    LicenseAction(label) {
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(context, R.string.source_open_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
 }
 
 private val thirdPartyComponents = listOf(
