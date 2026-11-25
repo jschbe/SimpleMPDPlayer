@@ -808,6 +808,7 @@ class MpdRepository(
                 }
                 null
             } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
                 com.github.jschbe.simplempdplayer.timer.TimerError.TIMEOUT
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (ack: MpdAckException) {

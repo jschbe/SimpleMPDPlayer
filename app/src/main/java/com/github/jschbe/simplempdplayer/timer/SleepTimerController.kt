@@ -5,12 +5,14 @@ import com.github.jschbe.simplempdplayer.data.ServerProfile
 import com.github.jschbe.simplempdplayer.mpd.PlaybackState
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** One global timer. The same mutation lock protects profile edits and bounded delivery. */
 class SleepTimerController(
@@ -27,6 +29,9 @@ class SleepTimerController(
     private var delivering: String? = null
     private var observation: kotlinx.coroutines.Job? = null
     private var ownerScope: CoroutineScope? = null
+    // The receiver may run out of time before it can claim or write. Keep that evidence
+    // until the next ordinary reconciliation, without extending the receiver's lifetime.
+    private val failedDeliveries = ConcurrentHashMap<String, Long>()
 
     fun retry() {
         ownerScope?.let { scope ->
@@ -46,10 +51,14 @@ class SleepTimerController(
         }
     }
 
-    suspend fun refresh() = operation {
+    suspend fun refresh() = reconcile()
+
+    private suspend fun reconcile(failedToken: String? = null) = operation {
         var saved = store.read()
-        val servers = profiles.first().also { if (it.readFailed) throw IOException() }
         val record = saved.record
+        if (failedToken != null && (record?.token != failedToken ||
+                !(knownDeliveryFailure(record) || record.status == TimerStatus.DELIVERING))) return@operation
+        val servers = profiles.first().also { if (it.readFailed) throw IOException() }
         if (record != null && record.pending) {
             val invalid = when {
                 clock.boot() == null -> record.copy(status = TimerStatus.FAILED, error = TimerError.CLOCK)
@@ -57,7 +66,8 @@ class SleepTimerController(
                 !record.matches(servers.servers.find { it.id == record.target.id }) -> record.copy(status = TimerStatus.PROFILE_CHANGED)
                 record.status == TimerStatus.ARMING -> record.copy(status = TimerStatus.FAILED, error = TimerError.SCHEDULING)
                 record.status == TimerStatus.DELIVERING && delivering != record.token -> record.copy(status = TimerStatus.FAILED, error = TimerError.UNCERTAIN)
-                record.status == TimerStatus.ACTIVE && !scheduler.hasPendingIntent() -> record.copy(status = TimerStatus.FAILED, error = TimerError.MISSING_ALARM)
+                record.status == TimerStatus.ACTIVE && (knownDeliveryFailure(record) || !scheduler.hasPendingIntent()) ->
+                    record.copy(status = TimerStatus.FAILED, error = TimerError.MISSING_ALARM)
                 else -> null
             }
             if (invalid != null) {
@@ -66,6 +76,7 @@ class SleepTimerController(
                 scheduler.cancel()
             }
         } else scheduler.cancel()
+        failedDeliveries.keys.removeAll { saved.record?.pending != true || it != saved.record?.token }
         val waiting = saved.record?.takeIf { it.status == TimerStatus.WAITING }
         if (waiting != null) {
             scheduler.cancel()
@@ -78,7 +89,7 @@ class SleepTimerController(
     }
 
     suspend fun setEnabled(enabled: Boolean) = operation {
-        val saved = store.read()
+        val saved = showFailedDelivery(store.read())
         val servers = profiles.first().also { if (it.readFailed) throw IOException() }
         if (enabled) {
             if (saved.record?.pending == true) { publish(saved, servers); return@operation }
@@ -95,7 +106,7 @@ class SleepTimerController(
     suspend fun setMinutes(minutes: Int) {
         if (minutes !in 1..MAX_SLEEP_MINUTES) return
         operation {
-            val saved = store.read()
+            val saved = showFailedDelivery(store.read())
             val servers = profiles.first().also { if (it.readFailed) throw IOException() }
             if (saved.minutes == minutes) { publish(saved, servers); return@operation }
             val changed = saved.copy(minutes = minutes)
@@ -166,11 +177,45 @@ class SleepTimerController(
         publish(failed, servers)
     }
 
-    /** Receiver only: durable claim before IO; duplicated/stale/early events cannot send a command. */
-    suspend fun fire(token: String) = operation {
+    /** Receiver entry point. Account for storage failures and timeout within the original budget. */
+    internal suspend fun deliverAlarm(token: String, budgetMillis: Long): Boolean {
+        val received = clock.elapsed()
+        val completed = withTimeoutOrNull(budgetMillis) {
+            if (!fire(token)) {
+                recordFailedDelivery(token, received)
+                reconcile(failedToken = token)
+            }
+            true
+        } ?: false
+        if (!completed) recordFailedDelivery(token, received)
+        return completed
+    }
+
+    private fun recordFailedDelivery(token: String, received: Long) {
+        failedDeliveries.merge(token, received, ::maxOf)
+        mutableState.update { current ->
+            val display = showFailedDelivery(current.settings)
+            if (display === current.settings) current
+            else current.copy(settings = display, remainingMillis = null, estimatedEndMillis = null)
+        }
+    }
+
+    private fun knownDeliveryFailure(record: TimerRecord): Boolean =
+        record.status == TimerStatus.ACTIVE &&
+            (failedDeliveries[record.token] ?: -1) >= requireNotNull(record.deadline)
+
+    private fun showFailedDelivery(saved: TimerSettings): TimerSettings {
+        val record = saved.record ?: return saved
+        return if (knownDeliveryFailure(record)) {
+            saved.copy(record = record.copy(status = TimerStatus.FAILED, error = TimerError.MISSING_ALARM))
+        } else saved
+    }
+
+    /** Durable claim before IO; duplicated/stale/early events cannot send a command. */
+    suspend fun fire(token: String): Boolean = tryOperation {
         var saved = store.read()
-        val record = saved.record ?: return@operation
-        if (record.token != token || record.status != TimerStatus.ACTIVE) return@operation
+        val record = saved.record ?: return@tryOperation
+        if (record.token != token || record.status != TimerStatus.ACTIVE || knownDeliveryFailure(record)) return@tryOperation
         val servers = profiles.first().also { if (it.readFailed) throw IOException() }
         val invalid = when {
             clock.boot() == null -> record.copy(status = TimerStatus.FAILED, error = TimerError.CLOCK)
@@ -181,9 +226,9 @@ class SleepTimerController(
         if (invalid != null) {
             saved = saved.copy(record = invalid)
             store.write(saved); scheduler.cancel(); publish(saved, servers)
-            return@operation
+            return@tryOperation
         }
-        if (clock.elapsed() < requireNotNull(record.deadline)) return@operation
+        if (clock.elapsed() < requireNotNull(record.deadline)) return@tryOperation
         delivering = record.token
         try {
             saved = saved.copy(record = record.copy(status = TimerStatus.DELIVERING))
@@ -207,19 +252,27 @@ class SleepTimerController(
     }
 
     private fun publish(saved: TimerSettings, servers: ServerSettings) {
-        mutableState.update { it.copy(settings = saved, loading = false,
+        mutableState.update { it.copy(settings = showFailedDelivery(saved), loading = false,
             targetName = saved.record?.let { record -> servers.servers.find { it.id == record.target.id }?.name ?: record.target.name },
             operationError = null) }
         tick()
     }
 
     private suspend fun operation(block: suspend () -> Unit) {
+        tryOperation(block)
+    }
+
+    private suspend fun tryOperation(block: suspend () -> Unit): Boolean {
         try {
             mutationLock.withLock {
                 mutableState.update { it.copy(busy = true) }
                 try { block() } finally { mutableState.update { it.copy(busy = false) } }
             }
+            return true
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: IOException) { mutableState.update { it.copy(loading = false, operationError = TimerError.STORAGE) } }
+        catch (_: IOException) {
+            mutableState.update { it.copy(loading = false, operationError = TimerError.STORAGE) }
+            return false
+        }
     }
 }

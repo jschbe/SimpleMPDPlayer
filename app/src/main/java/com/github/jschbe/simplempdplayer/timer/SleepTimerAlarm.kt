@@ -10,6 +10,8 @@ import android.net.InetAddresses
 import android.os.CancellationSignal
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
+import com.github.jschbe.simplempdplayer.BuildConfig
 import com.github.jschbe.simplempdplayer.PlayerApplication
 import java.net.InetAddress
 import java.util.concurrent.Executor
@@ -17,7 +19,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -57,7 +58,10 @@ class SleepTimerReceiver : BroadcastReceiver() {
         // No Activity, ExoPlayer or existing MPD socket is initialized by this path.
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                withTimeoutOrNull(8_000) { (context.applicationContext as PlayerApplication).sleepTimer.fire(token) }
+                val timer = (context.applicationContext as PlayerApplication).sleepTimer
+                if (!timer.deliverAlarm(token, 8_000) && BuildConfig.DEBUG) {
+                    Log.d("SleepTimerReceiver", "Delivery budget expired")
+                }
             } finally { result.finish() }
         }
     }

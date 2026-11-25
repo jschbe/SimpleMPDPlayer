@@ -7,6 +7,7 @@ import java.io.EOFException
 import java.io.IOException
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
@@ -35,6 +36,7 @@ class MpdClient(
     private val connectTimeoutMillis: Int = 5_000,
     private val readTimeoutMillis: Int = 5_000,
     private val operationTimeoutMillis: Long = 10_000,
+    private val resolveHost: suspend (String) -> InetAddress = platformMpdHostLookup::resolve,
 ) : MpdConnection {
     private val socket = Socket()
     private val mutex = Mutex()
@@ -42,8 +44,13 @@ class MpdClient(
     private var writer: BufferedWriter? = null
 
     override suspend fun connect(host: String, port: Int) = exchange {
+        val address = InetSocketAddress(resolveHost(host), port)
+        socketIo { connectSocket(address) }
+    }
+
+    private fun connectSocket(address: InetSocketAddress) {
         check(reader == null) { "Client already connected" }
-        socket.connect(InetSocketAddress(host, port), connectTimeoutMillis)
+        socket.connect(address, connectTimeoutMillis)
         socket.soTimeout = readTimeoutMillis
         socket.tcpNoDelay = true
         socket.keepAlive = true
@@ -53,7 +60,6 @@ class MpdClient(
         reader = BufferedReader(InputStreamReader(socket.getInputStream(), decoder))
         writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8))
         MpdProtocol.parseGreeting(readLine())
-        Unit
     }
 
     override suspend fun ping() {
@@ -67,19 +73,23 @@ class MpdClient(
     override suspend fun execute(name: String, vararg arguments: String): List<Pair<String, String>> {
         val command = MpdProtocol.command(name, arguments.toList())
         return exchange {
-            write(command)
-            readResponse()
+            socketIo {
+                write(command)
+                readResponse()
+            }
         }
     }
 
     /** Only the dedicated event socket calls this; cancellation closes it to unblock the read. */
     override suspend fun idle(): Set<String> = exchange(waitForIdle = true) {
-        socket.soTimeout = 0
-        write(MpdProtocol.command("idle", listOf("player", "playlist", "mixer", "options")))
-        readResponse().map { (key, value) ->
-            if (key != "changed") throw InvalidMpdResponse()
-            value
-        }.toSet()
+        socketIo {
+            socket.soTimeout = 0
+            write(MpdProtocol.command("idle", listOf("player", "playlist", "mixer", "options")))
+            readResponse().map { (key, value) ->
+                if (key != "changed") throw InvalidMpdResponse()
+                value
+            }.toSet()
+        }
     }
 
     private fun write(command: String) {
@@ -123,27 +133,28 @@ class MpdClient(
         }
     }
 
-    private suspend fun <T> exchange(waitForIdle: Boolean = false, block: () -> T): T = mutex.withLock {
-        try {
-            suspend fun runIo(): T = coroutineScope {
-                val operation = async(Dispatchers.IO) {
-                    try {
-                        block()
-                    } catch (error: IOException) {
-                        // Socket.close during cancellation must not replace cancellation with IO failure.
-                        currentCoroutineContext().ensureActive()
-                        throw error
-                    }
-                }
-                try {
-                    operation.await()
-                } catch (cancelled: CancellationException) {
-                    // Closing unblocks socket reads/connects before waiting for the IO child.
-                    close()
-                    throw cancelled
-                }
+    private suspend fun <T> socketIo(block: () -> T): T = coroutineScope {
+        val operation = async(Dispatchers.IO) {
+            try {
+                block()
+            } catch (error: IOException) {
+                // Socket.close during cancellation must not replace cancellation with IO failure.
+                currentCoroutineContext().ensureActive()
+                throw error
             }
-            if (waitForIdle) runIo() else withTimeout(operationTimeoutMillis) { runIo() }
+        }
+        try {
+            operation.await()
+        } catch (cancelled: CancellationException) {
+            // Closing unblocks socket reads/connects before waiting for the IO child.
+            close()
+            throw cancelled
+        }
+    }
+
+    private suspend fun <T> exchange(waitForIdle: Boolean = false, block: suspend () -> T): T = mutex.withLock {
+        try {
+            if (waitForIdle) block() else withTimeout(operationTimeoutMillis) { block() }
         } catch (_: TimeoutCancellationException) {
             close()
             currentCoroutineContext().ensureActive()

@@ -1,6 +1,7 @@
 package com.github.jschbe.simplempdplayer.mpd
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.Executors
@@ -36,7 +37,12 @@ class MpdProtocolInstrumentedTest {
 
     @Test
     fun connectsAndPingsOnAndroid(): Unit = runBlocking {
-        ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { server ->
+        for (host in listOf("localhost", "127.0.0.1", "::1")) checkLoopback(host)
+        assertEquals(1, (platformMpdHostLookup.resolve("fe80::1%1") as Inet6Address).scopeId)
+    }
+
+    private suspend fun checkLoopback(host: String) {
+        ServerSocket(0, 1, InetAddress.getByName(host)).use { server ->
             val executor = Executors.newSingleThreadExecutor()
             val response = executor.submit {
                 server.accept().use { socket ->
@@ -51,7 +57,7 @@ class MpdProtocolInstrumentedTest {
             }
             try {
                 MpdClient().use { client ->
-                    client.connect(requireNotNull(server.inetAddress.hostAddress), server.localPort)
+                    client.connect(host, server.localPort)
                     client.ping()
                 }
                 response.get(5, TimeUnit.SECONDS)

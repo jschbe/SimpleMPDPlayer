@@ -2,6 +2,7 @@ package com.github.jschbe.simplempdplayer.ui
 
 import android.app.LocaleManager
 import android.content.res.Configuration
+import android.content.res.Resources
 import android.os.Build
 import android.os.LocaleList
 import androidx.appcompat.app.AppCompatDelegate
@@ -26,6 +27,9 @@ class LocalizationUiTest {
     @get:Rule val compose = createEmptyComposeRule()
     private lateinit var scenario: ActivityScenario<MainActivity>
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private val systemLanguage get() = if (Build.VERSION.SDK_INT >= 33) {
+        instrumentation.targetContext.getSystemService(LocaleManager::class.java).systemLocales[0].language
+    } else Resources.getSystem().configuration.locales[0].language
 
     @Before fun start() {
         scenario = ActivityScenario.launch(MainActivity::class.java)
@@ -33,16 +37,21 @@ class LocalizationUiTest {
             it.setShowWhenLocked(true); it.setTurnScreenOn(true)
             AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList())
         }
-        compose.waitForIdle()
+        awaitLanguage(systemLanguage)
         // First-run editor belongs to the isolated test app only.
         compose.onAllNodesWithText(text(R.string.cancel)).fetchSemanticsNodes().takeIf { it.isNotEmpty() }?.let {
             compose.onNodeWithText(text(R.string.cancel)).performClick()
         }
     }
     @After fun stop() {
-        scenario.onActivity { AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList()) }
-        compose.waitForIdle()
-        scenario.close()
+        if (::scenario.isInitialized) {
+            try {
+                scenario.onActivity { AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList()) }
+                awaitLanguage(systemLanguage)
+            } finally {
+                scenario.close()
+            }
+        }
     }
     private fun text(id: Int): String {
         var result = ""
@@ -54,11 +63,25 @@ class LocalizationUiTest {
         compose.onNodeWithText(text(destination)).performClick()
     }
     private fun awaitLanguage(tag: String) {
-        compose.waitUntil(10_000) {
-            var language = ""
-            scenario.onActivity { language = it.resources.configuration.locales[0].language }
-            language == tag
+        var observed = "Activity unavailable"
+        try {
+            compose.waitUntil(10_000) {
+                var ready = false
+                scenario.onActivity {
+                    val decor = it.window.decorView
+                    val lifecycle = it.lifecycle.currentState
+                    val language = it.resources.configuration.locales[0].language
+                    observed = "language=$language, lifecycle=$lifecycle, laidOut=${decor.isLaidOut}, " +
+                        "layoutRequested=${decor.isLayoutRequested}, focused=${it.hasWindowFocus()}"
+                    ready = lifecycle == Lifecycle.State.RESUMED && language == tag &&
+                        decor.isLaidOut && !decor.isLayoutRequested
+                }
+                ready
+            }
+        } catch (timeout: ComposeTimeoutException) {
+            throw AssertionError("Expected language=$tag and a laid-out resumed Activity. Observed $observed", timeout)
         }
+        // Compose's Espresso idle check can stall if entered during the old window's relaunch.
         compose.waitForIdle()
     }
 
@@ -83,7 +106,7 @@ class LocalizationUiTest {
             compose.onNodeWithTag("language_$tag").performScrollTo().assertIsSelected()
         }
         compose.onNodeWithTag("language_system").performScrollTo().performClick()
-        compose.waitForIdle()
+        awaitLanguage(systemLanguage)
         scenario.onActivity { assertTrue(AppCompatDelegate.getApplicationLocales().isEmpty) }
         compose.onNodeWithTag("language_system").assertIsSelected()
     }
@@ -96,7 +119,7 @@ class LocalizationUiTest {
         compose.onNodeWithText("Langue").assertIsDisplayed()
         compose.onNodeWithTag("language_fr").performScrollTo().assertIsSelected()
         scenario.onActivity { it.getSystemService(LocaleManager::class.java).applicationLocales = LocaleList.getEmptyLocaleList() }
-        compose.waitForIdle()
+        awaitLanguage(systemLanguage)
         compose.onNodeWithTag("language_system").performScrollTo().assertIsSelected()
         // External selection can equal the device locale exactly: no resource change is needed.
         scenario.moveToState(Lifecycle.State.STARTED)
@@ -105,14 +128,13 @@ class LocalizationUiTest {
             manager.applicationLocales = manager.systemLocales
         }
         scenario.moveToState(Lifecycle.State.RESUMED)
-        compose.waitForIdle()
-        val systemLanguage = instrumentation.targetContext.getSystemService(LocaleManager::class.java).systemLocales[0].language
+        awaitLanguage(systemLanguage)
         val selected = AppLanguage.fromTags(systemLanguage).tag
         compose.onNodeWithTag("language_$selected").performScrollTo().assertIsSelected()
         scenario.moveToState(Lifecycle.State.STARTED)
         scenario.onActivity { it.getSystemService(LocaleManager::class.java).applicationLocales = LocaleList.getEmptyLocaleList() }
         scenario.moveToState(Lifecycle.State.RESUMED)
-        compose.waitForIdle()
+        awaitLanguage(systemLanguage)
         compose.onNodeWithTag("language_system").performScrollTo().assertIsSelected()
     }
 

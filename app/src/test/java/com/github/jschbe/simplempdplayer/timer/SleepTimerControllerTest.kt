@@ -26,10 +26,23 @@ class SleepTimerControllerTest {
     private class Store : TimerStorage {
         val value = MutableStateFlow(TimerSettings())
         var fail = false
+        var failReadOnce = false
+        var failClaim = false
         var writes = 0
         override val settings = value.asStateFlow()
-        override suspend fun read(): TimerSettings { if (fail) throw IOException(); return value.value }
-        override suspend fun write(settings: TimerSettings) { if (fail) throw IOException(); writes++; value.value = settings }
+        override suspend fun read(): TimerSettings {
+            if (failReadOnce) {
+                failReadOnce = false
+                throw IOException()
+            }
+            if (fail) throw IOException()
+            return value.value
+        }
+        override suspend fun write(settings: TimerSettings) {
+            if (fail || (failClaim && settings.record?.status == TimerStatus.DELIVERING)) throw IOException()
+            writes++
+            value.value = settings
+        }
     }
     private class Scheduler : TimerScheduler {
         var current: TimerRecord? = null
@@ -386,6 +399,69 @@ class SleepTimerControllerTest {
         assertEquals(armed, f.store.read().record)
         assertEquals(writes, f.store.writes)
         assertEquals(TimerError.STORAGE, f.timer.state.value.operationError)
+    }
+
+    @Test fun receiverClaimWriteFailureBecomesTerminalWithoutSendingPause() = runTest {
+        val f = Fixture()
+        val armed = f.start()
+        f.clock.now = armed.deadline!!
+        f.store.failClaim = true
+        f.timer.deliverAlarm(armed.token, 8_000)
+        assertTrue(f.targets.isEmpty())
+        assertEquals(armed.copy(status = TimerStatus.FAILED, error = TimerError.MISSING_ALARM), f.store.read().record)
+        assertNull(f.scheduler.current)
+    }
+
+    @Test fun receiverReadFailureSurvivesUntilReconciliationAndCannotAffectAReplacement() = runTest {
+        val f = Fixture()
+        val armed = f.start()
+        f.clock.now = armed.deadline!!
+        f.store.fail = true
+        f.timer.deliverAlarm(armed.token, 8_000)
+        assertFalse(f.timer.state.value.active)
+        assertEquals(TimerError.MISSING_ALARM, f.timer.state.value.settings.record?.error)
+        assertEquals(armed, f.store.value.value.record)
+        f.store.fail = false
+        f.timer.refresh()
+        assertEquals(TimerStatus.FAILED, f.store.read().record?.status)
+        f.timer.setEnabled(true)
+        val replacement = f.store.read().record!!
+        val replacementAlarm = f.scheduler.current
+        assertNotEquals(armed.token, replacement.token)
+        f.store.fail = true
+        f.timer.deliverAlarm(armed.token, 8_000)
+        f.store.fail = false
+        f.timer.refresh()
+        assertEquals(replacement, f.store.read().record)
+        assertEquals(replacementAlarm, f.scheduler.current)
+        assertTrue(f.targets.isEmpty())
+    }
+
+    @Test fun expiredDeadlineWithAnExistingTokenIsPreservedUntilThereIsDeliveryEvidence() = runTest {
+        val f = Fixture()
+        val armed = f.start()
+        val alarm = f.scheduler.current
+        f.clock.now = armed.deadline!! + 20_000
+        f.timer.refresh()
+        assertEquals(armed, f.store.read().record)
+        assertEquals(alarm, f.scheduler.current)
+        assertTrue(f.targets.isEmpty())
+    }
+
+    @Test fun staleReceiverRecoveringFromAReadFailureCannotStartReplacementWaitingTimer() = runTest {
+        val f = Fixture()
+        val old = f.start()
+        f.timer.setEnabled(false)
+        f.playback = null
+        f.timer.setEnabled(true)
+        val waiting = f.store.read().record!!
+        assertEquals(TimerStatus.WAITING, waiting.status)
+        f.playback = confirmed(PlaybackState.PLAYING)
+        f.store.failReadOnce = true
+        f.timer.deliverAlarm(old.token, 8_000)
+        assertEquals(waiting, f.store.read().record)
+        assertNull(f.scheduler.current)
+        assertTrue(f.targets.isEmpty())
     }
 
     @Test fun duplicateOldAndEarlyEventsNeverCauseExtraDelivery() = runTest {

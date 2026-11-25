@@ -3,6 +3,7 @@ package com.github.jschbe.simplempdplayer.timer
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -18,6 +19,8 @@ import java.util.concurrent.TimeUnit
 import com.github.jschbe.simplempdplayer.mpd.*
 import kotlin.concurrent.thread
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.withLock
 import org.junit.After
 import org.junit.Assert.*
@@ -148,6 +151,69 @@ class SleepTimerAndroidTest {
         assertEquals(TimerError.TIMEOUT, storage.read().record!!.error)
         assertTrue(SystemClock.elapsedRealtime() - start < 8_000)
         assertEquals(1, mpd.mutations.size)
+    }
+
+    @Test fun actualOneShotClaimsThenSendsExactlyOnePause() = runBlocking {
+        mpd.holdAcknowledgement = true
+        val record = profileMutationLock.withLock { scheduleActualAlarm() }
+        assertTrue(isAlarmScheduled())
+        try {
+            awaitActual("Pause from the OS alarm") { mpd.mutations.isNotEmpty() }
+            assertEquals(TimerStatus.DELIVERING, storage.read().record?.status)
+            assertFalse(isAlarmScheduled())
+            println("Actual alarm: Pause at deadline+${clock.elapsed() - record.deadline!!} ms, durable DELIVERING")
+        } finally {
+            mpd.holdAcknowledgement = false
+        }
+        awaitActual("durable completion") { storage.read().record?.status == TimerStatus.COMPLETED }
+        assertEquals(record.copy(status = TimerStatus.COMPLETED), storage.read().record)
+        assertEquals(listOf("pause \"1\""), mpd.allCommands)
+        assertFalse(scheduler.hasPendingIntent())
+    }
+
+    @Test fun actualOneShotConsumedDuringLockTimeoutIsRecognizedOnRefresh() = runBlocking {
+        val record = profileMutationLock.withLock { scheduleActualAlarm() }
+        app.sleepTimer.refresh()
+        assertEquals(TimerStatus.ACTIVE, app.sleepTimer.state.value.settings.record?.status)
+        profileMutationLock.withLock {
+            assertTrue(isAlarmScheduled())
+            awaitActual("consumption of the registered alarm") { !isAlarmScheduled() }
+            println("Actual alarm: consumed at deadline+${clock.elapsed() - record.deadline!!} ms, token exists=${scheduler.hasPendingIntent()}")
+            assertTrue(scheduler.hasPendingIntent())
+            awaitActual("receiver timeout before claim", timeoutMillis = 12_000) {
+                app.sleepTimer.state.value.settings.record?.error == TimerError.MISSING_ALARM
+            }
+            assertEquals(record, storage.read().record)
+            assertTrue(mpd.allCommands.isEmpty())
+        }
+        app.sleepTimer.refresh()
+        println("Actual alarm: after refresh ${storage.read().record?.status}, token exists=${scheduler.hasPendingIntent()}")
+        assertEquals(record.copy(status = TimerStatus.FAILED, error = TimerError.MISSING_ALARM), storage.read().record)
+        assertFalse(scheduler.hasPendingIntent())
+        assertTrue(mpd.allCommands.isEmpty())
+    }
+
+    private suspend fun scheduleActualAlarm(): TimerRecord {
+        val now = clock.elapsed()
+        val record = TimerRecord(UUID.randomUUID().toString(), target, clock.boot()!!, now, now + 6_000)
+        storage.write(TimerSettings(record = record))
+        scheduler.schedule(record)
+        return record
+    }
+
+    private fun isAlarmScheduled(): Boolean {
+        val dump = ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand("dumpsys alarm"))
+            .bufferedReader().use { it.readText() }
+        return dump.substringAfter(" pending alarms:", "").substringBefore("LazyAlarmStore stats:")
+            .lineSequence().any { it.trim() == "tag=*walarm*:${AndroidTimerScheduler.ACTION}" }
+    }
+
+    private suspend fun awaitActual(event: String, timeoutMillis: Long = 75_000, condition: suspend () -> Boolean) {
+        try {
+            withTimeout(timeoutMillis) { while (!condition()) delay(150) }
+        } catch (failure: kotlinx.coroutines.TimeoutCancellationException) {
+            throw AssertionError("Did not observe $event", failure)
+        }
     }
 
     private suspend fun due(future: Boolean = false): TimerRecord = profileMutationLock.withLock {

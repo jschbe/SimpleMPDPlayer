@@ -72,6 +72,8 @@ class ServerProfileTest {
             assertNotNull(host, ServerInput("Test", host).toProfile())
         }
         assertEquals("::1", ServerInput("Test", "[::1]").toProfile()!!.host)
+        assertEquals("fe80::1%1", ServerInput("Test", "[fe80::1%1]").toProfile()!!.host)
+        assertEquals("xn--bcher-kva.invalid", ServerInput("Test", "bücher.invalid").toProfile()!!.host)
         for (host in listOf("http://localhost", "localhost:6600", "localhost/music", "foo bar", "256.1.1.1", "foo..bar", "foo?x", "user@localhost", "[invalid]")) {
             assertNull(host, ServerInput("Test", host).toProfile())
         }
