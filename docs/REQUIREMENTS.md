@@ -33,9 +33,12 @@ for instructions, [architecture](ARCHITECTURE.md) for implementation, and
   language change does not change the credential binding.
 - Authenticate each new control, idle, Test and timer socket separately.
   Distinguish missing or unreadable credentials, rejected passwords, denied
-  MPD commands and Android LAN permission. Preserve the configured password
-  after rejection. Replacing or removing a credential invalidates the old
-  session. Deleting a protected profile removes its local credential.
+  MPD commands and Android LAN permission. Bound the credential read to five
+  seconds. Allow a read timeout to use the existing bounded recovery policy.
+  Missing, unreadable or rejected credentials do not automatically retry.
+  Preserve the configured password after rejection. Replacing or removing a
+  credential invalidates the old session. Deleting a protected profile removes
+  its local credential.
 - Restore the last valid selection on startup. Recover valid data from malformed
   settings and flag recovery. On ordinary read failure, preserve the last
   confirmed settings and keep any healthy session and enabled local receiver
@@ -164,6 +167,8 @@ for instructions, [architecture](ARCHITECTURE.md) for implementation, and
   Changes before the claim can cancel the attempt. Changes after the claim
   wait for it. A known pre-claim failure is reconciled when possible.
   Interrupted claimed delivery remains uncertain and is not replayed.
+  Optional orphan credential cleanup runs only on interactive start and is
+  deferred while a timer is waiting, arming, active or delivering.
   Persist sanitized failures for inspection. No timer-only polling, second
   interactive server or background service.
 

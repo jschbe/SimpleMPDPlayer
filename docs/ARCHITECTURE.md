@@ -240,12 +240,22 @@ timer records, intents and logs. JVM strings have no guaranteed erasure.
 The store stages and verifies a new record before committing the profile
 reference. The committed reference selects exactly one revision. Interrupted
 or ambiguous writes can leave both files. Previous reachable records remain
-usable, while obsolete records are retired after a confirmed commit. Startup
-prunes unreferenced files and aliases against healthy settings under the
-mutation lock. Recovered or unreadable settings defer pruning. Missing or
-unreadable referenced records fail closed. Credentials are resolved per
-connection using a bounded worker pool so a blocked Keystore call cannot send
-MPD traffic after cancellation.
+usable, while obsolete records are retired after a confirmed commit. An
+Activity start can prune unreferenced files and aliases once per process.
+Alarm-only startup and window focus changes do not initiate pruning. Pruning
+only proceeds if the mutation lock is immediately available, the timer has no
+pending record, and settings are readable and unrecovered. The lock protects
+that check and the set of referenced revisions through pruning. Necessary
+profile and credential writes still serialize with timer delivery and can
+encounter platform or storage delays.
+
+Missing or unreadable referenced records fail closed. Credential resolution
+waits at most five seconds per connection. A timed-out read can use the normal
+bounded recovery policy. Missing, unreadable or rejected credentials do not
+start automatic recovery. The two credential workers have no waiting queue.
+A blocking platform call can still occupy a worker after timeout or cancellation,
+but its late result cannot start a connection. The timer's six-second network
+budget still includes the credential lookup and all socket operations.
 
 Control, idle, Test and timer all use the common opener. It resolves a
 credential before dialing, validates the greeting and requires an empty

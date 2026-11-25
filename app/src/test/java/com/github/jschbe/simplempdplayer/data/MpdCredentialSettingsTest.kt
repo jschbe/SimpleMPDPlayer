@@ -4,9 +4,15 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.github.jschbe.simplempdplayer.timer.SleepTimerStore
+import com.github.jschbe.simplempdplayer.timer.TimerRecord
+import com.github.jschbe.simplempdplayer.timer.TimerSettings
+import com.github.jschbe.simplempdplayer.timer.TimerStatus
 import java.io.IOException
+import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -97,7 +103,7 @@ class MpdCredentialSettingsTest {
         assertEquals(3, secrets.records.size)
         assertTrue(invalidated.isEmpty())
         backing.failWriteBeforeCommit = false
-        store.pruneCredentials()
+        assertTrue(store.tryPruneCredentials { false })
         assertEquals(setOf(original.credentialRevision), secrets.records.keys)
         backing.failWriteAfterCommit = true
         assertTrue(runCatching { store.saveAndSelect(one, PasswordEdit.Replace(nextPassword)) }.exceptionOrNull() is IOException)
@@ -106,8 +112,31 @@ class MpdCredentialSettingsTest {
         assertTrue(secrets.resolve(replacement) == nextPassword)
         assertTrue(secrets.resolve(original) == firstPassword)
         backing.failWriteAfterCommit = false
-        store.pruneCredentials()
+        assertTrue(store.tryPruneCredentials { false })
         assertEquals(setOf(replacement.credentialRevision), secrets.records.keys)
+    }
+
+    @Test fun optionalCleanupDefersForPendingTimerOrBusyMutationLock() = runTest {
+        val secrets = Credentials()
+        val store = ServerSettingsStore(SettingsData(), secrets)
+        val timer = SleepTimerStore(SettingsData())
+        store.saveAndSelect(one, PasswordEdit.Replace(firstPassword))
+        val referenced = store.settings.first().servers.single().credentialRevision
+        val orphan = UUID.randomUUID().toString()
+        secrets.records[orphan] = nextPassword
+        val record = TimerRecord(UUID.randomUUID().toString(), one, boot = 1, started = 100, deadline = 200)
+        for (status in listOf(TimerStatus.WAITING, TimerStatus.ARMING, TimerStatus.ACTIVE, TimerStatus.DELIVERING)) {
+            timer.write(TimerSettings(record = record.copy(
+                status = status, deadline = record.deadline.takeUnless { status == TimerStatus.WAITING })))
+            assertFalse(store.tryPruneCredentials(timer::hasPendingTimer))
+            assertEquals(setOf(referenced, orphan), secrets.records.keys)
+        }
+        timer.write(TimerSettings())
+        profileMutationLock.withLock {
+            assertFalse(store.tryPruneCredentials { error("Optional cleanup waited on the mutation lock") })
+        }
+        assertTrue(store.tryPruneCredentials(timer::hasPendingTimer))
+        assertEquals(setOf(referenced), secrets.records.keys)
     }
 
     private suspend fun failure(block: suspend () -> Unit): CredentialFailure {

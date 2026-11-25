@@ -1,13 +1,44 @@
 # Verification history
 
-These reports record earlier verification. Package F only organizes
-documentation. The [requirements](REQUIREMENTS.md) and [architecture](ARCHITECTURE.md)
+These reports record verification by milestone and review package. The
+[requirements](REQUIREMENTS.md) and [architecture](ARCHITECTURE.md)
 describe the current implementation, and [development](DEVELOPMENT.md) explains
 how to reproduce available checks.
 
-## Latest implementation verification and release limits
+## G1 credential deadline and alarm startup
 
-Package E / R09 on **2026-11-25** is the latest implementation verification.
+On **2026-11-25**, the G1-01 and G1-02 changes were tested from review base
+`1b61db1`. The complete JVM suite passed **210 tests**, with zero failures
+or skips. Debug and both device-test APKs built successfully. Android Lint
+reported **0 errors and 20 existing warnings**.
+
+The complete Android run on Medium Phone API 36 used only `.devicetest` and
+reported **106 passed, 0 failed and 6 opt-in skips** out of 112 discovered.
+The first attempt ended early when the emulator process crashed. The complete
+rerun used the same AVD with Vulkan disabled. The G03 external-language case
+passed in 2.9 seconds in the complete run and 3.9 seconds in a separate run
+of all five localization UI tests. The full run included an
+AlarmManager delivery on the PIN-locked emulator using the latest password
+of a non-selected timer target.
+
+JVM regressions covered unanswered credential reads during initial setup,
+Test and isolated idle recovery, cancellation of callers while two workers
+remained blocked, stale results after a server switch, the existing timer
+budget and cleanup deferral for all pending timer states. The worker stall
+was injected.
+
+The opt-in cold-alarm probe passed all four Android phases with actual
+AlarmManager delivery and Android Keystore records. Both trials verified that
+the process was absent before the alarm and that Android started a new one.
+Each trial sent one Pause to a loopback fixture. The protected trial sent
+`password` before Pause. The orphan remained after alarm-only startup and
+while the interactive timer waited. A later interactive start removed the
+orphan and left the referenced credential usable. The emulator started for
+this verification was stopped afterward.
+
+## Package E implementation verification and release limits
+
+Package E / R09 was verified on **2026-11-25**.
 The final Medium Phone API 36 run used only the isolated `.devicetest` app,
 synthetic credentials and loopback fixtures.
 
@@ -375,7 +406,7 @@ on Medium Phone API 36 each passed **96** active cases with **0 failures and
 4 opt-in skips**. G03 passed in 2.93 s and 2.96 s. The debug build and all
 191 JVM tests passed. Lint reported 0 errors and 20 existing warnings.
 No physical device or production MPD was used. The emulator started for the
-run was stopped afterward. The [Package E run](#latest-implementation-verification-and-release-limits)
+run was stopped afterward. The [Package E run](#package-e-implementation-verification-and-release-limits)
 later passed G03 again.
 
 ## Manual acceptance checklist

@@ -160,6 +160,29 @@ adb -s "$serial" shell am instrument -w -r \
   -e timerProcessProbe cleanup "$runner"
 ```
 
+### Cold alarm delivery and credential cleanup
+
+[`CredentialCleanupAlarmProbe`](../app/src/androidTest/java/com/github/jschbe/simplempdplayer/timer/CredentialCleanupAlarmProbe.kt)
+uses an emulator-host loopback fake and fresh `.devicetest` data. Run `arm`
+and `verify` with the same `fixturePort` and `fixtureProtected` arguments:
+
+```sh
+adb -s "$serial" shell am instrument -w -r \
+  -e class "$base.timer.CredentialCleanupAlarmProbe" \
+  -e cleanupAlarmProbe "$phase" -e fixturePort "$fixture_port" \
+  -e fixtureProtected "$protected" "$runner"
+```
+
+After `arm`, check that its reported process has exited before the alarm
+falls due. If it is still running, terminate it as the test UID without
+Force Stop. The fixture must observe exactly one Pause on the alarm-started
+connection before `verify` launches the Activity. Run separately with
+`fixtureProtected=false` and `true`; the protected fixture must require the
+synthetic password from the probe before Pause. The fixture reports Stopped
+to interactive reads. The verify phase checks the persisted result and that
+the orphan survives alarm delivery and interactive Waiting, then checks that a
+later interactive start prunes it and leaves any referenced credential usable.
+
 ## Diagnostics
 
 In a debug build, `adb -s "$serial" logcat -s MpdConnection` shows bounded

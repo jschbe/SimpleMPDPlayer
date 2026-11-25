@@ -119,10 +119,19 @@ class ServerSettingsStore internal constructor(
         }
     }
 
-    internal suspend fun pruneCredentials() = profileMutationLock.withLock {
-        val current = settings.first()
-        if (!current.readFailed && !current.recovered) {
-            cleanUp { credentials.prune(current.servers.mapNotNull { it.credentialRevision }.toSet()) }
+    internal suspend fun tryPruneCredentials(hasPendingTimer: suspend () -> Boolean): Boolean {
+        // Optional work should not queue behind a profile write or an alarm delivery.
+        if (!profileMutationLock.tryLock()) return false
+        return try {
+            if (hasPendingTimer()) return false
+            val current = settings.first()
+            if (current.readFailed || current.recovered) return false
+            credentials.prune(current.servers.mapNotNull { it.credentialRevision }.toSet())
+            true
+        } catch (_: IOException) {
+            false
+        } finally {
+            profileMutationLock.unlock()
         }
     }
 
@@ -132,7 +141,7 @@ class ServerSettingsStore internal constructor(
     }
 
     private suspend inline fun cleanUp(operation: () -> Unit) {
-        // An obsolete revision is unreachable after commit. Retry cleanup on the next process start.
+        // An obsolete revision is unreachable after commit. An interactive cleanup can retry.
         try { operation() } catch (_: IOException) { }
     }
 

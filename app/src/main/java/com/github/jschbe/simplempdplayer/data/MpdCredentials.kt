@@ -1,6 +1,13 @@
 package com.github.jschbe.simplempdplayer.data
 
 import java.io.IOException
+import java.util.concurrent.FutureTask
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 /** Passed to an explicit Save or Test only. A draft never belongs to observable editor state. */
 sealed interface PasswordEdit {
@@ -34,6 +41,25 @@ internal interface MpdCredentialStore {
     suspend fun put(profile: ServerProfile, password: String)
     suspend fun remove(revision: String)
     suspend fun prune(referenced: Set<String>)
+}
+
+/** A blocked provider can occupy a worker, but cannot hold a cancelled caller open. */
+internal class CredentialReadWorker {
+    private val workers = ThreadPoolExecutor(0, 2, 30, TimeUnit.SECONDS, SynchronousQueue(), { work ->
+        Thread(work, "MPD credential read").apply { isDaemon = true }
+    })
+
+    suspend fun read(block: () -> String): String = suspendCancellableCoroutine { continuation ->
+        val work = FutureTask {
+            continuation.resumeWith(runCatching(block))
+        }
+        continuation.invokeOnCancellation { work.cancel(true) }
+        try {
+            workers.execute(work)
+        } catch (_: RejectedExecutionException) {
+            continuation.resumeWithException(CredentialException(CredentialFailure.UNREADABLE))
+        }
+    }
 }
 
 internal object NoMpdCredentials : MpdCredentialStore {

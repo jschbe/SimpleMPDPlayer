@@ -75,6 +75,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        (application as PlayerApplication).onInteractiveStart()
+    }
+
     override fun onStop() {
         if (!isChangingConfigurations) model.noteDeparture()
         super.onStop()

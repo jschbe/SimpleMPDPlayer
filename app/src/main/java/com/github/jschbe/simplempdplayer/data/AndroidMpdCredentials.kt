@@ -10,42 +10,21 @@ import java.io.IOException
 import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.security.ProviderException
-import java.util.concurrent.FutureTask
-import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.SynchronousQueue
-import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 
 /** Immutable files and keys per committed revision. The settings reference is the commit point. */
 internal class AndroidMpdCredentials(context: Context) : MpdCredentialStore {
     private val directory by lazy { File(context.noBackupFilesDir, "mpd_credentials") }
-    // A platform call may ignore interruption. Bound outstanding reads without holding the
-    // receiver's coroutine open past its deadline, and never perform a command in this worker.
-    private val readers = ThreadPoolExecutor(0, 2, 30, TimeUnit.SECONDS, SynchronousQueue(), { work ->
-        Thread(work, "MPD credential read").apply { isDaemon = true }
-    })
+    private val readers = CredentialReadWorker()
 
     override suspend fun resolve(profile: ServerProfile): String? {
         val revision = profile.credentialRevision ?: return null
-        return suspendCancellableCoroutine { continuation ->
-            val work = FutureTask {
-                continuation.resumeWith(runCatching { storage(CredentialFailure.UNREADABLE) { read(profile, revision) } })
-            }
-            continuation.invokeOnCancellation { work.cancel(true) }
-            try {
-                readers.execute(work)
-            } catch (_: RejectedExecutionException) {
-                continuation.resumeWithException(CredentialException(CredentialFailure.UNREADABLE))
-            }
-        }
+        return readers.read { storage(CredentialFailure.UNREADABLE) { read(profile, revision) } }
     }
 
     private fun read(profile: ServerProfile, revision: String): String {

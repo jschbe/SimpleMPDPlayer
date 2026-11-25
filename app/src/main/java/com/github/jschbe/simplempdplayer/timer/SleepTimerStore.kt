@@ -36,6 +36,9 @@ class SleepTimerStore(
     override val settings = if (backupSettings == null) dataStore.data.map { decode(it) }
         else combine(dataStore.data, backupSettings.data, ::decode)
 
+    // Called under the profile/timer lock. Optional cleanup needs only the live record.
+    internal suspend fun hasPendingTimer(): Boolean = decode(dataStore.data.first()).record?.pending == true
+
     // Production calls these methods under the profile/timer lock. An existing backed-up
     // value wins, including an explicit 30. Keep legacy minutes for recovery until copied.
     override suspend fun read(): TimerSettings {

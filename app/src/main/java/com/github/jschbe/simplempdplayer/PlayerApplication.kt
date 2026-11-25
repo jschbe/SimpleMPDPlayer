@@ -11,7 +11,9 @@ import com.github.jschbe.simplempdplayer.data.*
 import com.github.jschbe.simplempdplayer.timer.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -21,11 +23,12 @@ class PlayerApplication : Application() {
         // Media3 source exceptions may contain remote details; expose only our error categories.
         androidx.media3.common.util.Log.setLogLevel(androidx.media3.common.util.Log.LOG_LEVEL_OFF)
         sleepTimer.observe(playbackScope)
-        playbackScope.launch { serverSettings.pruneCredentials() }
     }
 
     // Shared while the process lives: background metadata must not depend on an Activity's collectors.
     private val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var credentialCleanupJob: Job? = null
+    private var credentialsPruned = false
     internal val credentials by lazy { AndroidMpdCredentials(this) }
     internal val serverSettings by lazy {
         ServerSettingsStore(serverDataStore, credentials) { old ->
@@ -34,8 +37,20 @@ class PlayerApplication : Application() {
             }
         }
     }
+    private val timerStore by lazy { SleepTimerStore(sleepTimerDataStore, serverDataStore) }
+
+    internal fun onInteractiveStart() {
+        if (credentialsPruned || credentialCleanupJob?.isActive == true) return
+        credentialCleanupJob = playbackScope.launch {
+            // Let startup reconciliation finish before trying the lock. Recheck persisted
+            // timer state inside the lock so a newly armed timer cannot race with pruning.
+            sleepTimer.state.first { !it.loading && !it.busy }
+            credentialsPruned = serverSettings.tryPruneCredentials(timerStore::hasPendingTimer)
+        }
+    }
+
     val sleepTimer: SleepTimerController by lazy {
-        SleepTimerController(SleepTimerStore(sleepTimerDataStore, serverDataStore), serverSettings.settings,
+        SleepTimerController(timerStore, serverSettings.settings,
             AndroidTimerClock(this), AndroidTimerScheduler(this), profileMutationLock,
             pause = {
                 if (android.os.Build.VERSION.SDK_INT >= 37 &&

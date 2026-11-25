@@ -1,12 +1,15 @@
 package com.github.jschbe.simplempdplayer.mpd
 
 import java.io.IOException
+import java.net.SocketTimeoutException
 import com.github.jschbe.simplempdplayer.data.CredentialException
 import com.github.jschbe.simplempdplayer.data.CredentialFailure
 import com.github.jschbe.simplempdplayer.data.ServerProfile
 import com.github.jschbe.simplempdplayer.data.validMpdPassword
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 
 class InvalidMpdResponse : IOException("Invalid MPD response")
 
@@ -15,6 +18,7 @@ internal class MpdResponseLimit : IOException("MPD response exceeds the read bud
 
 internal const val ACK_PASSWORD = 3
 internal const val ACK_PERMISSION = 4
+internal const val CREDENTIAL_READ_TIMEOUT_MILLIS = 5_000L
 
 internal fun CredentialException.connectionError() = when (failure) {
     CredentialFailure.MISSING -> ConnectionError.CREDENTIAL_MISSING
@@ -29,7 +33,13 @@ internal suspend fun MpdConnection.openMpd(
     resolvePassword: suspend (ServerProfile) -> String?,
     host: suspend () -> String = { profile.host },
 ) {
-    val password = resolvePassword(profile)
+    val password = try {
+        withTimeout(CREDENTIAL_READ_TIMEOUT_MILLIS) { resolvePassword(profile) }
+    } catch (_: TimeoutCancellationException) {
+        // A caller may have a tighter total budget, or may have cancelled the session.
+        currentCoroutineContext().ensureActive()
+        throw SocketTimeoutException("MPD credential lookup timed out")
+    }
     if (password == null) {
         if (profile.credentialRevision != null) throw CredentialException(CredentialFailure.MISSING)
     } else if (!validMpdPassword(password)) throw CredentialException(CredentialFailure.INVALID)
